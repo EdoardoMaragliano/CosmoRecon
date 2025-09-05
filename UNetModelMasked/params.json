@@ -1,0 +1,14 @@
+{
+    "obs_dir": "./obs_data/",
+    "true_dir": "./true_data/",
+    "mask_dir": "./mask_data",
+    "output_dir": "output_products",
+    "field_size": 128,
+    "batch_size": 4,
+    "epochs": 200,
+    "save_freq": 5,
+    "learning_rate": 0.0001,
+    "log_file": "train.log",
+    "use_mask": false,
+    "debug": true
+}

@@ -1,0 +1,9 @@
+UNetModelMasked/store_models/
+UNetModelMasked/logs/
+UNetModelMasked/losses/
+UNetModelMasked/*data/
+UNetModelMasked/predicted_fields/
+UNetModelMasked/training_checkpoints/
+UNetModelMasked/train.log
+UNetModelMasked/__pycache__/
+UNetModelMasked/*.npy

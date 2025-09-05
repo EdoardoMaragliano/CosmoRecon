@@ -1,0 +1,16 @@
+name: tf_gpu_fixed
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - tensorflow==2.20.0
+      - numpy
+      - h5py
+      - matplotlib
+      - scikit-learn
+      - tqdm
+      - pandas
+      - pillow
