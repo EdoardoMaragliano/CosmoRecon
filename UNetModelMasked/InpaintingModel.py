@@ -2,7 +2,7 @@
 Adaptive 3D U-Net for Hole-Filling in Galaxy Surveys
 ====================================================
 
-This script implements a 3D U-Net for reconstructing missing regions in galaxy survey density fields.
+This script implements a 3D U-Net for reconstructing missing regions in galaxy survey overdensity fields.
 It uses a mask input to indicate missing voxels and a softplus output to enforce non-negative predictions.
 Supports adaptive depth depending on input size.
 
@@ -22,19 +22,35 @@ import numpy as np
 # =====================
 class InpaintingModel:
     """Adaptive 3D U-Net with mask input and softplus output for non-negative predictions."""
-    def __init__(self, base_filters=16, min_size=4, dropout_layer=False, dropout_rate=0.1, output_activation='softplus'):
+    def __init__(self, base_filters=16, min_size=4, dropout_layer=False, dropout_rate=0.1, input_field='rho', norm_val=40):
         """
         Initializes the inpainting model.
         Parameters:
             base_filters (int): The number of base filters to use in the model's layers. Default is 16.
             min_size (int): The minimum spatial size for feature maps in the model. Default is 4.
         """
+
+    
         self.base_filters = base_filters
         self.min_size = min_size
         self.dropout_layer = dropout_layer
         self.dropout_rate = dropout_rate
-        self.output_activation = output_activation
+        self.norm_val = norm_val
+    
+        self.output_activation = self.shifted_relu if input_field == 'delta' else tf.nn.relu
         self.logger = None
+
+    def shifted_relu(self, x):
+        """Shifted ReLU activation to ensure outputs are >= -1/norm_val, i.e. delta >= -1.
+        Use standard ReLU if you are training rho to rho.
+
+        Parameters:
+            x (tf.Tensor): Input tensor.
+        Returns:
+            tf.Tensor: Activated tensor.
+        """
+        min_val = -1.0/self.norm_val
+        return tf.nn.relu(x - min_val) + min_val
 
     def set_logger(self, logger):
         self.logger = logger
@@ -81,15 +97,16 @@ class InpaintingModel:
             # Reduce filters
             filters //= 2
 
-            ## the two following blocks were originally reversed (Convo then upsample) in Paper 1
+            ## in Punya's code, it was (Convo then upsample) like in Paper 1
+            # Convolutional block
+            x = keras.layers.Conv3D(filters, (3,3,3), activation='relu', padding='same')(x)
+            x = keras.layers.Conv3D(filters, (3,3,3), activation='relu', padding='same')(x)
 
             # Upsample
             x = keras.layers.Conv3DTranspose(filters, (3,3,3), strides=(2,2,2), padding='same')(x)
             x = keras.layers.concatenate([x, convs[d]], axis=-1)
 
-            # Convolutional block
-            x = keras.layers.Conv3D(filters, (3,3,3), activation='relu', padding='same')(x)
-            x = keras.layers.Conv3D(filters, (3,3,3), activation='relu', padding='same')(x)
+
 
 
         # Output layer (non-negative)

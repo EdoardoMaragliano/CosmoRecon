@@ -1,14 +1,16 @@
 {
-    "obs_dir": "./obs_data/",
-    "true_dir": "./true_data/",
-    "mask_dir": "./mask_data",
-    "output_dir": "output_products",
+    "obs_dir": "/farmdisk1/ganeshai/Quijote/EUCLID_RECONSTRUCTIONS/TRAINING_DATA/zeldovich",
+    "true_dir": "/farmdisk1/ganeshai/Quijote/EUCLID_RECONSTRUCTIONS/TRAINING_DATA/observed/",
+    "mask_dir": "train_rho/mask_data/",
+    "output_dir": "train_rho/output_products/",
     "field_size": 128,
+    "input_field": "rho",
+    "base_filters": 16,
     "batch_size": 4,
-    "epochs": 200,
+    "epochs": 500,
     "save_freq": 5,
-    "learning_rate": 0.0001,
-    "log_file": "train.log",
+    "learning_rate":1e-4,
+    "log_file": "train_rho/train.log",
     "use_mask": false,
     "debug": true
 }

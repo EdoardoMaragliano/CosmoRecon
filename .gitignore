@@ -2,7 +2,9 @@ UNetModelMasked/store_models/
 UNetModelMasked/logs/
 UNetModelMasked/losses/
 UNetModelMasked/*data/
-UNetModelMasked/predicted_fields/
+UNetModelMasked/train_delta/
+UNetModelMasked/train_rho/
+UNetModelMasked/output_products/
 UNetModelMasked/training_checkpoints/
 UNetModelMasked/train.log
 UNetModelMasked/__pycache__/
