@@ -2,14 +2,11 @@
 Adaptive 3D U-Net for Hole-Filling in Galaxy Surveys
 ====================================================
 
-This script implements a 3D U-Net for reconstructing missing regions in galaxy survey overdensity fields.
-It uses a mask input to indicate missing voxels and a softplus output to enforce non-negative predictions.
-Supports adaptive depth depending on input size.
+This module defines an adaptive 3D U-Net model for inpainting missing data in 3D fields, such as those found in galaxy surveys. The model can take an additional mask channel as input to indicate missing regions and uses a ReLU activation function at the output to ensure non-negative predictions.
+The model architecture is flexible, allowing for dynamic adjustment of depth based on input size and minimum feature map size. It also includes options for dropout regularization.
+Author: [Edoardo Maragliano]
+Date: [9 September 2025]
 
-Example usage:
---------------
->>> model = InpaintingModel().prepare_model(input_size=(64,64,64,2))
->>> model.summary()
 """
 
 import tensorflow as tf
@@ -21,13 +18,20 @@ import numpy as np
 # Adaptive 3D U-Net Model
 # =====================
 class InpaintingModel:
-    """Adaptive 3D U-Net with mask input and softplus output for non-negative predictions."""
+    """Adaptive 3D U-Net with mask input and ReLU output for non-negative predictions."""
     def __init__(self, base_filters=16, min_size=4, dropout_layer=False, dropout_rate=0.1, input_field='rho', norm_val=40):
         """
         Initializes the inpainting model.
         Parameters:
             base_filters (int): The number of base filters to use in the model's layers. Default is 16.
             min_size (int): The minimum spatial size for feature maps in the model. Default is 4.
+            dropout_layer (bool): Whether to include a dropout layer in the model. Default is False.
+            dropout_rate (float): The dropout rate to use if dropout_layer is True. Default is 0.1.
+            input_field (str): Type of input field, either 'rho' for density or 'delta' for contrast. Default is 'rho'.
+            norm_val (float): Normalization value used for shifted ReLU when input_field is 'delta'. Default is 40.
+            
+        Raises:
+            ValueError: If input_field is not 'rho' or 'delta'.
         """
 
     

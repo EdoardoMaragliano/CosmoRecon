@@ -1,6 +1,11 @@
 from tensorflow import keras
 import os
 
+# =====================
+# Epoch Checkpoint Callback
+# =====================
+"""Custom Keras callback to save the model at specified epoch intervals."""
+
 class EpochCheckpoint(keras.callbacks.Callback):
     def __init__(self, filepath, period=10):
         super().__init__()
