@@ -26,15 +26,22 @@ parser.add_argument('--input_field', type=str, default='rho', help='Type of inpu
 parser.add_argument('--output_dir', type=str, default='output_products', help='Directory to store output fields')
 parser.add_argument('--use_mask', type=bool, default=False, help='True = use mask, False = do not use mask')
 parser.add_argument('--field_size', type=int, default=128, help='Size of input fields (NxNxN)')
-parser.add_argument('--batch_size', type=int, default=4)
+parser.add_argument('--batch_size', type=int, default=16)
 parser.add_argument('--epochs', type=int, default=500)
+parser.add_argument('--repeat_dataset', type=bool, default=False, help='Repeat dataset indefinitely for continuous training')
 parser.add_argument('--save_freq', type=int, default=10, help='Frequency (in epochs) to save the model')
 parser.add_argument('--learning_rate', type=float, default=1e-4)
-parser.add_argument('--log_file', type=str, default='logs/training.log', help='File to store logs')
+parser.add_argument('--log_file', type=str, default='training.log', help='File name (not path) to store logs')
 parser.add_argument('--debug', action='store_true', help='Enable debug mode with verbose logging')
 
 
 args = parser.parse_args()
+
+# Ensure output directories exist
+os.makedirs(args.output_dir, exist_ok=True)
+os.makedirs(os.path.join(args.output_dir, 'store_models'), exist_ok=True)
+os.makedirs(os.path.join(args.output_dir, 'logs'), exist_ok=True)
+os.makedirs(os.path.join(args.output_dir, 'output_data'), exist_ok=True)
 
 # ============================
 # Load parameters from JSON
@@ -68,7 +75,7 @@ logging.basicConfig(
     level=logging.INFO if not args.debug else logging.DEBUG,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler(args.log_file),
+        logging.FileHandler(os.path.join(args.output_dir, args.log_file)),
         logging.StreamHandler(sys.stdout)
     ],
     force=True
@@ -181,8 +188,10 @@ def parse_fn(obs_path, true_path, mask_path=None, single_mask=None, use_mask=Tru
         true.set_shape((args.field_size, args.field_size, args.field_size, 1))
         return (x, true)
 
-def create_dataset(x_files, y_files, mask_files=None, single_mask=None, batch_size=4, shuffle=True, use_mask=True):
-
+def create_dataset(x_files, y_files, mask_files=None, single_mask=None, batch_size=args.batch_size,
+                   shuffle=True, use_mask=True, repeat=False):
+    """Creates a tf.data.Dataset from file paths with optional masks."""
+    
     logging.debug("create_dataset called with: %d x_files, %d y_files, mask_files=%s, single_mask=%s, batch_size=%d, shuffle=%s, use_mask=%s", 
         len(x_files), len(y_files), str(mask_files is not None), str(single_mask is not None), batch_size, str(shuffle), str(use_mask))
     
@@ -214,8 +223,12 @@ def create_dataset(x_files, y_files, mask_files=None, single_mask=None, batch_si
     else:
         logging.debug("No shuffle applied to dataset.")
 
+    if repeat:
+        logging.debug("Repeating dataset indefinitely.")
+        dataset = dataset.repeat()
+
     logging.debug("Batching dataset with batch_size=%d", batch_size)
-    dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    dataset = dataset.batch(batch_size, drop_remainder=False).prefetch(tf.data.AUTOTUNE)
     logging.debug("Dataset ready. Returning tf.data.Dataset object.")
 
     return dataset
@@ -228,6 +241,7 @@ train_dataset = create_dataset(
     batch_size=args.batch_size,
     use_mask=use_mask,
     shuffle=True,
+    repeat=args.repeat_dataset
     )
 
 logging.info('train dataset has shape: %s', str(train_dataset))
@@ -238,7 +252,8 @@ val_dataset = create_dataset(
     single_mask=single_mask if use_single_mask else None,
     batch_size=args.batch_size,
     shuffle=False,                  # No shuffle for validation
-    use_mask=use_mask
+    use_mask=use_mask,
+    repeat=False                    # No repeat for validation
 )
 
 logging.info('val dataset has shape: %s', str(val_dataset))
@@ -298,46 +313,66 @@ def masked_mse_loss(y_true, y_pred, mask=None):
 # Build and compile model
 # ============================
 
-#strategy = tf.distribute.MirroredStrategy()
-#logging.info("Number of devices: {}".format(strategy.num_replicas_in_sync))
+strategy = tf.distribute.MirroredStrategy()
+logging.info(f"Number of devices: {strategy.num_replicas_in_sync}")
 
-#with strategy.scope():
-keras.backend.clear_session()
 logging.info("Building and compiling model...")
-
-mask_channels = 2 if use_mask else 1
-
-base_model_obj = InpaintingModel(input_field=args.input_field, norm_val=density_normalization)
-base_model_obj.set_logger(logging)
 logging.info("Preparing model...")
-base_model = base_model_obj.prepare_model(
-    input_size=(args.field_size, args.field_size, args.field_size, mask_channels)
-    )
+
+keras.backend.clear_session()
+
+with strategy.scope():
+   
+    mask_channels = 2 if use_mask else 1
+
+    base_model_obj = InpaintingModel(input_field=args.input_field, norm_val=density_normalization)
+    base_model_obj.set_logger(logging)
+    
+    base_model = base_model_obj.prepare_model(
+        input_size=(args.field_size, args.field_size, args.field_size, mask_channels)
+        )
+    
+    # masked_model = MaskedInpaintingModel(inputs=base_model.input, outputs=base_model.output)
+    base_model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate, amsgrad=True, global_clipnorm=1e-2),
+        loss=["mean_squared_error"],
+        metrics=["mean_squared_error"],
+        )
+    
 logging.info("Model summary:\n%s", str(base_model.summary()))
-# masked_model = MaskedInpaintingModel(inputs=base_model.input, outputs=base_model.output)
-base_model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate, amsgrad=True, global_clipnorm=1e-2),
-    loss=["mean_squared_error"],
-    metrics=["mean_squared_error"],
-    )
 logging.info("Model built and compiled successfully")
 
+## end of with strategy.scope()
 # ============================
 # Callbacks
 # ============================
+from EpochCheckpoint import EpochCheckpoint
 
-checkpoint_cb = keras.callbacks.ModelCheckpoint(
-    filepath='./store_models/model_{epoch:02d}.keras',
+"""checkpoint_cb = keras.callbacks.ModelCheckpoint(
+    filepath=os.path.join(callback_main_folder,'store_models','model_{epoch:02d}.keras'),
     monitor='loss',
     save_freq='epoch',
     save_weights_only=False,
     save_best_only=False
+)"""
+
+# personalized callback to save every N epochs
+checkpoint_cb = EpochCheckpoint(
+    filepath=os.path.join(args.output_dir, 'store_models', 'model_{epoch:02d}.keras'),
+    period=args.save_freq  # salva ogni 10 epoche
 )
 tensorboard_cb = keras.callbacks.TensorBoard(
-    log_dir='./logs',
+    log_dir=os.path.join(args.output_dir, 'logs'),
     histogram_freq=1
     )
 
+# Early stopping to prevent overfitting 
+earlystop_cb = keras.callbacks.EarlyStopping(
+    monitor='val_loss',      # misura la loss sulla validation set
+    patience=20,             # numero di epoche senza miglioramento prima di fermare
+    verbose=1,
+    restore_best_weights=True  # alla fine ripristina i pesi migliori
+)
 
 # ============================
 # debug prints
@@ -359,13 +394,16 @@ if args.debug:
 # Train
 # ============================
 
+steps_per_epoch = int(np.ceil(len(x_train) / args.batch_size)) if not args.repeat_dataset else None
+
 logging.info("Starting fit...")
 history = base_model.fit(
     train_dataset,
     batch_size=args.batch_size,
     validation_data=val_dataset,
     epochs=args.epochs,
-    callbacks=[checkpoint_cb, tensorboard_cb]
+    callbacks=[checkpoint_cb, tensorboard_cb, earlystop_cb],
+    steps_per_epoch=steps_per_epoch  # necessario se il dataset è ripetuto indefinitamente
 )
 logging.info("Fit completed")
 
@@ -373,9 +411,10 @@ logging.info("Fit completed")
 # Save losses
 # ============================
 logging.info("Saving training and validation losses...")
-os.makedirs('./losses', exist_ok=True)
-np.save('./losses/loss.npy', history.history['loss'])
-np.save('./losses/val_loss.npy', history.history['val_loss'])
+loss_dir = os.path.join(args.output_dir, 'losses')
+os.makedirs(loss_dir, exist_ok=True)
+np.save(os.path.join(loss_dir, 'loss.npy'), history.history['loss'])
+np.save(os.path.join(loss_dir, 'val_loss.npy'), history.history['val_loss'])
 logging.info("Losses saved successfully")
 logging.info("Training finished successfully")
 
@@ -405,11 +444,11 @@ for i, pred in enumerate(predictions):
     logging.info(f"Saving predicted field for sample {i+1}/{len(x_valid)}")
     # denormalize for comparison with true and observed fields
     pred_field = pred[..., 0] * density_normalization
-    np.save(os.path.join(output_dir, f'pred_field_{i:03d}.npy'), pred_field)
-    #np.save(os.path.join(output_dir, f'true_field_{i:03d}.npy'), np.load(y_valid[i]))
-    #np.save(os.path.join(output_dir, f'obs_field_{i:03d}.npy'), np.load(x_valid[i]))
+    np.save(os.path.join(output_dir, 'output_data', f'pred_field_{i:03d}.npy'), pred_field)
+    #np.save(os.path.join(output_dir, 'output_data', f'true_field_{i:03d}.npy'), np.load(y_valid[i]))
+    #np.save(os.path.join(output_dir, 'output_data', f'obs_field_{i:03d}.npy'), np.load(x_valid[i]))
 
-logging.info(f"Saved predicted fields in {output_dir}")
+logging.info(f"Saved predicted fields in {output_dir}/output_data/")
 logging.info("Evaluation completed successfully")
 
 endtime = datetime.now()  # fine timer
