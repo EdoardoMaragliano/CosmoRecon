@@ -1,14 +1,18 @@
 import os
 from glob import glob
 
-folders = ['logs/*/', 'store_models', 'output_products', 'losses', '__pycache__']
+main_dir = 'train_rho'
+folders = ['logs/*/', 'store_models', 'output_data', 'losses', '__pycache__']
 
 for folder in folders:
-    files = glob(os.path.join(folder, '*'))
+    files = glob(os.path.join(main_dir, folder, '*'))
     for f in files:
         if os.path.isfile(f):
             os.remove(f)
+            print(f'Removed file: {f}')
 
-logfile = 'train.log'
+logfile = os.path.join(main_dir, 'train.log')
 if os.path.isfile(logfile):
     os.remove(logfile)
+    print(f'Removed file: {logfile}')
+print('Cleanup completed.')

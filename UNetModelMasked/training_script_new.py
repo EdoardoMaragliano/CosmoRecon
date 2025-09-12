@@ -29,6 +29,7 @@ parser.add_argument('--field_size', type=int, default=128, help='Size of input f
 parser.add_argument('--batch_size', type=int, default=16)
 parser.add_argument('--epochs', type=int, default=500)
 parser.add_argument('--repeat_dataset', type=bool, default=False, help='Repeat dataset indefinitely for continuous training')
+parser.add_argument('--drop_remainder', type=bool, default=False, help='Drop remainder in batching to ensure consistent batch sizes')
 parser.add_argument('--save_freq', type=int, default=10, help='Frequency (in epochs) to save the model')
 parser.add_argument('--learning_rate', type=float, default=1e-4)
 parser.add_argument('--log_file', type=str, default='training.log', help='File name (not path) to store logs')
@@ -81,6 +82,12 @@ logging.basicConfig(
     force=True
 )
 
+if args.input_field == 'delta':
+    logging.info("Training to reconstruct delta fields (shifted ReLU output)")
+    logging.info(f"Using density normalization: {density_normalization}")
+elif args.input_field == 'rho':
+    logging.info("Training to reconstruct rho fields (standard output)")
+    logging.info(f"Using density normalization: {density_normalization}")
 
 # ============================
 # Collect files
@@ -189,11 +196,11 @@ def parse_fn(obs_path, true_path, mask_path=None, single_mask=None, use_mask=Tru
         return (x, true)
 
 def create_dataset(x_files, y_files, mask_files=None, single_mask=None, batch_size=args.batch_size,
-                   shuffle=True, use_mask=True, repeat=False):
+                   shuffle=True, use_mask=True, repeat=False, drop_remainder=args.drop_remainder):
     """Creates a tf.data.Dataset from file paths with optional masks."""
-    
-    logging.debug("create_dataset called with: %d x_files, %d y_files, mask_files=%s, single_mask=%s, batch_size=%d, shuffle=%s, use_mask=%s", 
-        len(x_files), len(y_files), str(mask_files is not None), str(single_mask is not None), batch_size, str(shuffle), str(use_mask))
+
+    logging.debug("create_dataset called with: %d x_files, %d y_files, mask_files=%s, single_mask=%s, batch_size=%d, shuffle=%s, use_mask=%s, repeat=%s", 
+        len(x_files), len(y_files), str(mask_files is not None), str(single_mask is not None), batch_size, str(shuffle), str(use_mask), str(repeat))
     
     if use_mask and single_mask is not None:
         # create dataset with single mask for all samples
@@ -228,7 +235,7 @@ def create_dataset(x_files, y_files, mask_files=None, single_mask=None, batch_si
         dataset = dataset.repeat()
 
     logging.debug("Batching dataset with batch_size=%d", batch_size)
-    dataset = dataset.batch(batch_size, drop_remainder=False).prefetch(tf.data.AUTOTUNE)
+    dataset = dataset.batch(batch_size, drop_remainder=drop_remainder).prefetch(tf.data.AUTOTUNE)
     logging.debug("Dataset ready. Returning tf.data.Dataset object.")
 
     return dataset
@@ -347,19 +354,12 @@ logging.info("Model built and compiled successfully")
 # Callbacks
 # ============================
 from EpochCheckpoint import EpochCheckpoint
-
-"""checkpoint_cb = keras.callbacks.ModelCheckpoint(
-    filepath=os.path.join(callback_main_folder,'store_models','model_{epoch:02d}.keras'),
-    monitor='loss',
-    save_freq='epoch',
-    save_weights_only=False,
-    save_best_only=False
-)"""
+from tensorflow.keras.callbacks import CSVLogger
 
 # personalized callback to save every N epochs
 checkpoint_cb = EpochCheckpoint(
     filepath=os.path.join(args.output_dir, 'store_models', 'model_{epoch:02d}.keras'),
-    period=args.save_freq  # salva ogni 10 epoche
+    period=args.save_freq  # salva ogni N epoche
 )
 tensorboard_cb = keras.callbacks.TensorBoard(
     log_dir=os.path.join(args.output_dir, 'logs'),
@@ -373,6 +373,8 @@ earlystop_cb = keras.callbacks.EarlyStopping(
     verbose=1,
     restore_best_weights=True  # alla fine ripristina i pesi migliori
 )
+
+csv_logger = CSVLogger(os.path.join(args.output_dir, "history.csv"), append=False)
 
 # ============================
 # debug prints
@@ -394,17 +396,20 @@ if args.debug:
 # Train
 # ============================
 
-steps_per_epoch = int(np.ceil(len(x_train) / args.batch_size)) if not args.repeat_dataset else None
+steps_per_epoch = int(np.ceil(len(x_train) / args.batch_size)) if args.repeat_dataset else None
 
 logging.info("Starting fit...")
+
 history = base_model.fit(
     train_dataset,
     batch_size=args.batch_size,
     validation_data=val_dataset,
     epochs=args.epochs,
-    callbacks=[checkpoint_cb, tensorboard_cb, earlystop_cb],
-    steps_per_epoch=steps_per_epoch  # necessario se il dataset è ripetuto indefinitamente
+    callbacks=[checkpoint_cb, tensorboard_cb, earlystop_cb, csv_logger],
+    steps_per_epoch=steps_per_epoch,  # necessario se il dataset è ripetuto indefinitamente
+    verbose=1
 )
+
 logging.info("Fit completed")
 
 # ============================
@@ -442,11 +447,11 @@ predictions = base_model.predict(val_dataset_eval)
 
 for i, pred in enumerate(predictions):
     logging.info(f"Saving predicted field for sample {i+1}/{len(x_valid)}")
+
     # denormalize for comparison with true and observed fields
     pred_field = pred[..., 0] * density_normalization
     np.save(os.path.join(output_dir, 'output_data', f'pred_field_{i:03d}.npy'), pred_field)
-    #np.save(os.path.join(output_dir, 'output_data', f'true_field_{i:03d}.npy'), np.load(y_valid[i]))
-    #np.save(os.path.join(output_dir, 'output_data', f'obs_field_{i:03d}.npy'), np.load(x_valid[i]))
+
 
 logging.info(f"Saved predicted fields in {output_dir}/output_data/")
 logging.info("Evaluation completed successfully")
