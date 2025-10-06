@@ -1,7 +1,7 @@
 import os
 from glob import glob
 
-main_dir = 'train_rho'
+main_dir = 'train_delta'
 folders = ['logs/*/', 'store_models', 'output_data', 'losses', '__pycache__']
 
 for folder in folders:

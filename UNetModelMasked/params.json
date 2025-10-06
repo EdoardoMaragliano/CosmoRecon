@@ -1,8 +1,8 @@
 {
     "obs_dir": "/farmdisk1/ganeshai/Quijote/EUCLID_RECONSTRUCTIONS/TRAINING_DATA/zeldovich",
     "true_dir": "/farmdisk1/ganeshai/Quijote/EUCLID_RECONSTRUCTIONS/TRAINING_DATA/observed/",
-    "mask_dir": "train_rho/mask_data/",
-    "output_dir": "train_rho/",
+    "mask_dir": "train_delta/mask_data/",
+    "output_dir": "train_delta/",
     "field_size": 128,
     "input_field": "rho",
     "base_filters": 16,

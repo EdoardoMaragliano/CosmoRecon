@@ -243,24 +243,24 @@ def create_dataset(x_files, y_files, mask_files=None, single_mask=None, batch_si
 
 train_dataset = create_dataset(
     x_train, y_train,
-    mask_files=mask_train if mask_train is not None else None,
+    mask_files = mask_train if mask_train is not None else None,
     single_mask=single_mask if use_single_mask else None,
-    batch_size=args.batch_size,
-    use_mask=use_mask,
-    shuffle=True,
-    repeat=args.repeat_dataset
+    batch_size = args.batch_size,
+    use_mask = use_mask,
+    shuffle = True,
+    repeat = args.repeat_dataset
     )
 
 logging.info('train dataset has shape: %s', str(train_dataset))
 
 val_dataset = create_dataset(
     x_valid, y_valid,
-    mask_files=mask_valid if mask_valid is not None else None,
-    single_mask=single_mask if use_single_mask else None,
-    batch_size=args.batch_size,
-    shuffle=False,                  # No shuffle for validation
-    use_mask=use_mask,
-    repeat=False                    # No repeat for validation
+    mask_files = mask_valid if mask_valid is not None else None,
+    single_mask = single_mask if use_single_mask else None,
+    batch_size = args.batch_size,
+    shuffle = False,                  # No shuffle for validation
+    use_mask = use_mask,
+    repeat = False                    # No repeat for validation
 )
 
 logging.info('val dataset has shape: %s', str(val_dataset))
@@ -437,7 +437,8 @@ val_dataset_eval = create_dataset(
     mask_files=mask_valid if mask_valid is not None else None,
     single_mask=single_mask if use_single_mask else None,
     batch_size=1,       # batch singolo per salvare un file per campo
-    shuffle=False,
+    shuffle=False,      # no shuffle
+    repeat=False,       # no repeat
     use_mask=use_mask
 )
 

@@ -25,7 +25,7 @@ REPEAT_DATASET = False
 DROP_REMAINDER = False
 TEST_SIZE = 0.2
 
-OUTPUT_DIR = "optuna_results"
+OUTPUT_DIR = "optuna_results/" + datetime.now().strftime("%Y%m%d-%H%M%S")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # =========================================
@@ -33,9 +33,16 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # =========================================
 logging.basicConfig(
     level=logging.INFO,
+    
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout), 
+              logging.FileHandler(os.path.join(OUTPUT_DIR, "optuna.log"))],
 )
+
+logging.info("Starting hyperparameter optimization with Optuna")
+logging.info(f"OBS_DIR: {OBS_DIR}", f", TRUE_DIR: {TRUE_DIR}, MASK_DIR: {MASK_DIR}")
+logging.info(f"INPUT_FIELD: {INPUT_FIELD}, FIELD_SIZE: {FIELD_SIZE}, EPOCHS_PER_TRIAL: {EPOCHS_PER_TRIAL}")
+logging.info(f"REPEAT_DATASET: {REPEAT_DATASET}, DROP_REMAINDER: {DROP_REMAINDER}, TEST_SIZE: {TEST_SIZE}")
 
 # =========================================
 # Load file lists
