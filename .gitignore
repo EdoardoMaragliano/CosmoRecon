@@ -9,3 +9,5 @@ UNetModelMasked/*/train.log
 UNetModelMasked/__pycache__/
 UNetModelMasked/*/*.npy
 UNetModelMasked/*/history.csv
+training_runs/
+optuna_runs/

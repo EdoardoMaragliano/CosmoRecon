@@ -22,6 +22,8 @@ parser.add_argument('--param_file', type=str, help='Path to JSON parameter file'
 parser.add_argument('--obs_dir', type=str, help='Directory with observed .npy fields')
 parser.add_argument('--true_dir', type=str, help='Directory with true .npy fields')
 parser.add_argument('--mask_dir', type=str, help='Directory with mask .npy files')
+parser.add_argument('--obs_basefile', type=str, help='Base filename for observed .npy fields')
+parser.add_argument('--true_basefile', type=str, help='Base filename for true .npy fields')
 parser.add_argument('--input_field', type=str, default='rho', help='Type of input field: delta or rho')
 parser.add_argument('--output_dir', type=str, default='output_products', help='Directory to store output fields')
 parser.add_argument('--use_mask', type=bool, default=False, help='True = use mask, False = do not use mask')
@@ -34,6 +36,9 @@ parser.add_argument('--save_freq', type=int, default=10, help='Frequency (in epo
 parser.add_argument('--learning_rate', type=float, default=1e-4)
 parser.add_argument('--log_file', type=str, default='training.log', help='File name (not path) to store logs')
 parser.add_argument('--debug', action='store_true', help='Enable debug mode with verbose logging')
+parser.add_argument('--density_normalization', type=float, default=40.0, help='Normalization factor for density fields')
+parser.add_argument('--min_mock_idx', type=int, default=None, help='Minimum mock index to use (for subsetting)')
+parser.add_argument('--max_mock_idx', type=int, default=None, help='Maximum mock index to use (for subsetting)')
 
 
 args = parser.parse_args()
@@ -58,10 +63,8 @@ use_mask = bool(args.use_mask)
 
 if args.input_field not in ['delta', 'rho']:
     raise ValueError("input_field must be 'delta' or 'rho'")
-if args.input_field == 'delta':
-    density_normalization = 20.0
-elif args.input_field == 'rho':
-    density_normalization = 40.0
+
+density_normalization = args.density_normalization
 
 
 # ============================
@@ -93,10 +96,21 @@ elif args.input_field == 'rho':
 # Collect files
 # ============================
 x_files = sorted(glob.glob(os.path.join(args.obs_dir,
-             'zeldovich_rec_density_*_from_redshift_space_128_CIC_sm_10_zeldareco.npy')))
+             args.obs_basefile)))
 y_files = sorted(glob.glob(os.path.join(args.true_dir, 
-            'halo_number_density_real_space_*_128_CIC_group_tab_002.npy')))
+            args.true_basefile)))
 mask_files = sorted(glob.glob(os.path.join(args.mask_dir, '*.npy')))
+
+# select indexes from args if needed (not implemented here)
+if args.min_mock_idx is not None and args.max_mock_idx is not None:
+    x_files = x_files[args.min_mock_idx:args.max_mock_idx]
+    y_files = y_files[args.min_mock_idx:args.max_mock_idx]
+    if use_mask:
+        mask_files = mask_files[args.min_mock_idx:args.max_mock_idx]
+
+        logging.info(f"Using files from index {args.min_mock_idx} to {args.max_mock_idx}")
+        logging.info(f"Number of x_files: {len(x_files)}, y_files: {len(y_files)}, mask_files: {len(mask_files)}")
+
 
 assert len(x_files) == len(y_files), "Mismatch in number of observed and true files!"
 
@@ -370,7 +384,7 @@ tensorboard_cb = keras.callbacks.TensorBoard(
 earlystop_cb = keras.callbacks.EarlyStopping(
     monitor='val_loss',      # misura la loss sulla validation set
     patience=20,             # numero di epoche senza miglioramento prima di fermare
-    verbose=1,
+    verbose=2,
     restore_best_weights=True  # alla fine ripristina i pesi migliori
 )
 
@@ -407,7 +421,7 @@ history = base_model.fit(
     epochs=args.epochs,
     callbacks=[checkpoint_cb, tensorboard_cb, earlystop_cb, csv_logger],
     steps_per_epoch=steps_per_epoch,  # necessario se il dataset è ripetuto indefinitamente
-    verbose=1
+    verbose=2
 )
 
 logging.info("Fit completed")

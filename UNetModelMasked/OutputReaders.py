@@ -46,7 +46,7 @@ def set_latex_env():
 
 
 class OutputReader:
-    def __init__(self, real_space=None, redshift_space=None, lt_rec=None, nn_rec=None, lt_nn_rec=None):
+    def __init__(self, real_space=None, redshift_space=None, lt_rec=None, nn_rec=None, lt_nn_rec=None, name: str = "OutputReader"):
         """Parametri:
         real_space: path ai campi di densità in real space
         redshift_space: path ai campi di densità in redshift space
@@ -68,6 +68,8 @@ class OutputReader:
         self._pk_multipoles = {}
         self._pk_residuals = {}
         self._pk_discrepancies = {}
+
+        self.name = name
 
         print("OutputReader inizializzato")
 
@@ -279,9 +281,19 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import gridspec
+
+
 class Plotter:
-    def __init__(self, reader, colors_dict: dict = None):
-        self.reader = reader
+    def __init__(self, readers, colors_dict: dict = None, linestyles: list = None):
+        # Permetti passaggio di singolo reader o lista
+        if not isinstance(readers, (list, tuple)):
+            readers = [readers]
+        self.readers = readers
+
+        # Colori predefiniti
         self.colors_dict = colors_dict if colors_dict is not None else {
             'real_space': 'black',
             'redshift_space': 'tab:orange',
@@ -290,67 +302,89 @@ class Plotter:
             'lt_nn_rec': 'tab:red'
         }
 
-        self.pkylabel=[
+        # Linestyles predefiniti per ciascun reader
+        default_linestyles = ['-', '--', ':', '-.']
+        self.linestyles = linestyles if linestyles is not None else default_linestyles[:len(readers)]
+
+        # Etichette per gli assi
+        self.pkylabel = [
             r"$P_0(k)\, [h^{-3}~\mathrm{Mpc}^{3}]$",
             r"$P_2(k)\, [h^{-3}~\mathrm{Mpc}^{3}]$",
             r"$P_4(k)\, [h^{-3}~\mathrm{Mpc}^{3}]$"
         ]
-
         self.pkxlabel = r"$k\, [h~\mathrm{Mpc}^{-1}]$"
 
-        self.legend_labels_dict={
-        'real_space': 'Real Space',
-        'redshift_space': 'Redshift Space',
-        'lt_rec': 'LT',
-        'nn_rec': 'NN',
-        'lt_nn_rec': 'LT+NN'}
+        # Etichette leggenda
+        self.legend_labels_dict = {
+            'real_space': 'Real Space',
+            'redshift_space': 'Redshift Space',
+            'lt_rec': 'LT',
+            'nn_rec': 'NN',
+            'lt_nn_rec': 'LT+NN'
+        }
 
     def _make_legend_handles(self, modes, legend_labels_dict=None):
-        """Crea gli handles per la legenda globale."""
-
+        """Crea gli handles per la legenda (colori e, se serve, linestyles)."""
         handles = []
-        modes.insert(0, 'real_space')  # aggiungi real_space alla legenda
+
+        # Prima riga: handles per i modes (colori)
+        modes = ['real_space'] + modes
         for mode in modes:
-            label = legend_labels_dict.get(mode, mode) if legend_labels_dict else self.legend_labels_dict.get(mode, mode)
+            label = (legend_labels_dict or self.legend_labels_dict).get(mode, mode)
             color = self.colors_dict.get(mode, None)
             handle = plt.Line2D([], [], color=color, lw=2, label=label)
             handles.append(handle)
 
-        return handles
+        # Seconda riga (solo se >1 reader): handles per i linestyles
+        ls_handles = []
+        if len(self.readers) > 1:
+            ls_handles = [
+                plt.Line2D([], [], color='dimgray', lw=2, linestyle=ls, label=reader.name)
+                for reader, ls in zip(self.readers, self.linestyles)
+            ]
+
+        return handles, ls_handles
+
+
+    def _compose_label(self, mode, reader_idx):
+        """Helper per etichettare in modo chiaro combinando mode e reader."""
+        base = self.legend_labels_dict.get(mode, mode)
+        if len(self.readers) > 1:
+            return f"{base} (R{reader_idx+1})"
+        return base
 
     def plot_pk_residuals(self,
-                       modes=None,
-                       title=None,
-                       y_label='pk_residuals',
-                       figsize=(14, 4),
-                       RESPANELYLIM: float = 5,
-                       legend_labels_dict: dict = None,
-                       share_col=True,
-                       LABELSIZE: int = 11
-                       ):
-        """
-        Plot residual stats (mean/std) for ℓ=0,2,4 pk_multipoles vs k.
-        """
-
-        if not hasattr(self.reader, 'pk_residuals'):
-            raise ValueError("pk_residuals non calcolati.")
+                          modes=None,
+                          title=None,
+                          y_label='pk_residuals',
+                          figsize=(14, 4),
+                          RESPANELYLIM: float = 5,
+                          legend_labels_dict: dict = None,
+                          share_col=True,
+                          LABELSIZE: int = 11):
+        """Plot residual stats (mean/std) per ℓ=0,2,4."""
+        if not all(hasattr(r, 'pk_residuals') for r in self.readers):
+            raise ValueError("pk_residuals non calcolati in tutti i readers.")
 
         if modes is None:
-            modes = list(self.reader.pk_residuals.keys())
+            modes = list(self.readers[0].pk_residuals.keys())
 
         share_col = 'col' if share_col else False
-
-        k = self.reader.k_values
+        k = self.readers[0].k_values
         fig, axs = plt.subplots(1, 3, figsize=figsize, sharex=share_col)
 
-        for l in range(3):  # ℓ = 0,2,4 pk_multipoles
-            for mode in modes:
-                axs[l].plot(
-                    k,
-                    self.reader.pk_residuals[mode][l],
-                    label=mode,
-                    color=self.colors_dict.get(mode, None)
-                )
+        for l in range(3):  # ℓ = 0, 2, 4
+            for i, reader in enumerate(self.readers):
+                linestyle = self.linestyles[i]
+                for mode in modes:
+                    axs[l].plot(
+                        k,
+                        reader.pk_residuals[mode][l],
+                        label=self._compose_label(mode, i),
+                        color=self.colors_dict.get(mode, None),
+                        linestyle=linestyle,
+                        linewidth=2
+                    )
 
             axs[l].set_xlim(np.min(k), np.max(k))
             axs[l].set_xscale('log')
@@ -360,114 +394,123 @@ class Plotter:
             axs[l].fill_between(k, -1, 1, alpha=0.2, color='grey')
             axs[l].fill_between(k, -2, 2, alpha=0.1, color='grey')
             axs[l].set_ylim(-RESPANELYLIM, RESPANELYLIM)
-            axs[l].set_yticks(np.arange(-RESPANELYLIM, RESPANELYLIM+1, 2))
+            axs[l].set_yticks(np.arange(-RESPANELYLIM, RESPANELYLIM + 1, 2))
 
-            axs[l].set_xscale('log')
-            axs[l].set_xlabel(self.pkxlabel)
-            axs[l].set_ylabel("residuals")
-
-        # Legend unica
-        handles = self._make_legend_handles(modes, legend_labels_dict)
-        fig.legend(handles=handles, loc='lower center', ncol=len(modes), frameon=False, fontsize=LABELSIZE)
+        # Legenda
+        handles_colors, handles_linestyles = self._make_legend_handles(modes, legend_labels_dict)
+        all_handles = handles_colors + handles_linestyles
+        fig.legend(handles=all_handles,
+                   loc='lower center',
+                   ncol=max(len(modes)+1, len(self.readers)),
+                   frameon=False, fontsize=LABELSIZE)
 
         fig.suptitle(title)
         fig.tight_layout(rect=[0, 0.05, 1, 0.95])
-
         return fig, axs
 
     def plot_pk_multipoles_and_residuals(self,
-                                      modes=None,
-                                      multipoles: list = [0, 2, 4],
-                                      title=None,
-                                      legend_labels_dict: dict = None,
-                                      figsize=(11.7, 5),
-                                      RESPANELYLIM: float = 5,
-                                      UPPERPANELYLIM: list = None,
-                                      width_ratios: list = None,
-                                      height_ratios: list = None,  
-                                      share_col: bool = True, 
-                                      hspace: float = None,
-                                      wspace: float = 0.2,
-                                      LABELSIZE: int = 11
-                                      ):
+                                         modes=None,
+                                         multipoles: list = [0, 2, 4],
+                                         title=None,
+                                         legend_labels_dict: dict = None,
+                                         figsize=(11.7, 5),
+                                         RESPANELYLIM: float = 5,
+                                         UPPERPANELYLIM: list = None,
+                                         width_ratios: list = None,
+                                         height_ratios: list = None,
+                                         share_col: bool = True,
+                                         hspace: float = None,
+                                         wspace: float = 0.3,
+                                         LABELSIZE: int = 11):
         """Plot 2xL: multipoli sopra, residui sotto."""
-        
         if modes is None:
-            modes = [m for m in self.reader.pk_multipoles.keys() if m != 'real_space']
+            modes = [m for m in self.readers[0].pk_multipoles.keys() if m != 'real_space']
 
         if share_col:
-            share_col = 'col' 
+            share_col = 'col'
             hspace = 0
 
-        k = self.reader.k_values
-        L = len(multipoles) #self.reader.mean_pk_multipoles[modes[0]].shape[0]
+        k = self.readers[0].k_values
+        L = len(multipoles)
         figsize = figsize if figsize is not None else (5 * L, 8)
-        
 
-        WIDTHRATIOS = width_ratios if width_ratios is not None else [1]*L
-        HEIGHTRATIOS = height_ratios if height_ratios is not None else [1]*L
+        WIDTHRATIOS = width_ratios if width_ratios is not None else [1] * L
+        HEIGHTRATIOS = height_ratios if height_ratios is not None else [1] * L
 
-        # define figure and GridSpec
         fig = plt.figure(figsize=figsize)
-        gs = gridspec.GridSpec(2, L, height_ratios=HEIGHTRATIOS, width_ratios=WIDTHRATIOS,
-                               hspace=hspace, wspace=wspace)
-        
+        gs = gridspec.GridSpec(2, L, height_ratios=HEIGHTRATIOS,
+                               width_ratios=WIDTHRATIOS, hspace=hspace, wspace=wspace)
 
-
-        # Multipoli
+        # --- P(k) multipoles ---
         axs = np.empty(L, dtype=object)
         for l in range(L):
-            
             axs[l] = fig.add_subplot(gs[0, l])
+            for i, reader in enumerate(self.readers):
+                linestyle = self.linestyles[i]
+                for mode in modes + ['real_space']:
+                    mean_poles = reader.mean_pk_multipoles[mode]
+                    axs[l].plot(
+                        k, mean_poles[l],
+                        color=self.colors_dict.get(mode, None),
+                        linestyle=linestyle,
+                        linewidth=2
+                    )
 
-            for mode in modes + ['real_space']:
-                mean_poles = self.reader.mean_pk_multipoles[mode]
-                axs[l].plot(k, mean_poles[l], color=self.colors_dict.get(mode, None), linewidth=2)
-
-            axs[l].tick_params(axis='both', which='both', direction='in', labelsize = LABELSIZE)
+            axs[l].tick_params(axis='both', which='both', direction='in', labelsize=LABELSIZE)
             axs[l].set_xscale('log')
             axs[l].set_xlim(np.min(k), np.max(k))
-            axs[l].set_xlabel(self.pkxlabel) 
+            axs[l].set_xlabel(self.pkxlabel)
             axs[l].set_ylabel(self.pkylabel[l])
             if UPPERPANELYLIM is not None:
-                axs[l].set_ylim(UPPERPANELYLIM) 
+                axs[l].set_ylim(UPPERPANELYLIM)
             if l == 0:
                 axs[l].set_yscale('log')
             if l > 0:
                 axs[l].axhline(0, linestyle="--", color="black", linewidth=1)
-        
 
-        # Residui
+        # --- Residuals ---
         res = np.empty(L, dtype=object)
         for l in range(L):
-            if share_col == False:
-                res[l] = fig.add_subplot(gs[1, l])
-            elif share_col:
-                res[l] = fig.add_subplot(gs[1, l], sharex=axs[l])
+            res[l] = fig.add_subplot(gs[1, l], sharex=axs[l] if share_col else None)
+            if share_col:
                 axs[l].tick_params(labelbottom=False)
 
-            for mode in modes:
-                res[l].plot(k, self.reader.pk_residuals[mode][l],
-                        color=self.colors_dict.get(mode, None), linewidth=2)
+            for i, reader in enumerate(self.readers):
+                linestyle = self.linestyles[i]
+                for mode in modes:
+                    res[l].plot(
+                        k,
+                        reader.pk_residuals[mode][l],
+                        color=self.colors_dict.get(mode, None),
+                        linestyle=linestyle,
+                        linewidth=2
+                    )
+
             res[l].set_xlim(np.min(k), np.max(k))
             res[l].set_xlabel(self.pkxlabel)
-
             res[l].axhline(0, linestyle="--", color="black", linewidth=1)
             res[l].fill_between(k, -1, 1, alpha=0.2, color='grey')
             res[l].fill_between(k, -2, 2, alpha=0.1, color='grey')
             res[l].set_ylim(-RESPANELYLIM, RESPANELYLIM)
-            res[l].set_yticks(np.arange(-RESPANELYLIM, RESPANELYLIM+1, 2))
-
+            res[l].set_yticks(np.arange(-RESPANELYLIM, RESPANELYLIM + 1, 2))
             res[l].set_xscale('log')
-            res[l].set_xlabel(self.pkxlabel)
             res[l].set_ylabel("residuals")
 
-        # Legend globale
-        handles = self._make_legend_handles(modes, legend_labels_dict)
-        fig.legend(handles=handles, loc='lower center', ncol=len(modes), bbox_to_anchor=(0.5, -0.1), frameon=False, fontsize=LABELSIZE)
-
+        # Legenda
+        handles_colors, handles_linestyles = self._make_legend_handles(modes, legend_labels_dict)
+        #all_handles = handles_colors + handles_linestyles
+        fig.legend(handles=handles_colors, 
+                   loc='lower center',
+                   ncol=len(modes)+1,
+                   bbox_to_anchor=(0.5, -0.1),
+                   frameon=False, fontsize=LABELSIZE
+        )
+        fig.legend(handles=handles_linestyles,
+                loc='lower center',
+                ncol=len(self.readers),
+                bbox_to_anchor=(0.5, -0.15),
+                frameon=False, fontsize=LABELSIZE
+        )
+        
         fig.suptitle(title)
-        #fig.tight_layout(rect=[0, 0.05, 1, 0.97])
-        plt.show()
-
         return fig
