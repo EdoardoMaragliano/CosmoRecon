@@ -1,0 +1,29 @@
+2025-11-26 16:52:17,184 [training] [INFO] Starting training script
+2025-11-26 16:52:17,199 [training] [INFO] x_files are: /farmdisk1/ganeshai/Quijote/EUCLID_RECONSTRUCTIONS/TRAINING_DATA/observed/halo_number_density_redshift_space_000_128_CIC_group_tab_002.npy
+2025-11-26 16:52:17,199 [training] [INFO] y_files are: /farmdisk1/ganeshai/Quijote/EUCLID_RECONSTRUCTIONS/TRAINING_DATA/observed/halo_number_density_real_space_000_128_CIC_group_tab_002.npy
+2025-11-26 16:52:17,199 [training] [INFO] Collected 100 observed files, 100 true files, and 0 mask files
+2025-11-26 16:52:17,199 [training] [INFO] Train samples: 80, Validation samples: 20
+2025-11-26 16:52:17,199 [root] [INFO] Creating dataset with 80 samples. Use mask: False
+2025-11-26 16:52:24,969 [root] [DEBUG] Dataset created from x_files and y_files only. Mapping without mask.
+2025-11-26 16:52:25,610 [root] [DEBUG] Single channel input (obs only), shape: (128, 128, 128, 1)
+2025-11-26 16:52:26,097 [root] [DEBUG] Dataset shuffled
+2025-11-26 16:52:26,098 [root] [DEBUG] Dataset repeated indefinitely
+2025-11-26 16:52:26,102 [root] [DEBUG] Dataset batched with batch_size=16, drop_remainder=True
+2025-11-26 16:52:26,102 [root] [INFO] Creating dataset with 20 samples. Use mask: False
+2025-11-26 16:52:26,103 [root] [DEBUG] Dataset created from x_files and y_files only. Mapping without mask.
+2025-11-26 16:52:26,109 [root] [DEBUG] Single channel input (obs only), shape: (128, 128, 128, 1)
+2025-11-26 16:52:26,125 [root] [DEBUG] Dataset shuffled
+2025-11-26 16:52:26,127 [root] [DEBUG] Dataset batched with batch_size=16, drop_remainder=False
+2025-11-26 16:52:26,127 [tensorflow] [INFO] Using MirroredStrategy with devices ('/job:localhost/replica:0/task:0/device:GPU:0', '/job:localhost/replica:0/task:0/device:GPU:1', '/job:localhost/replica:0/task:0/device:GPU:2', '/job:localhost/replica:0/task:0/device:GPU:3')
+2025-11-26 16:52:27,724 [training] [INFO] Number of devices: 4
+2025-11-26 16:52:28,686 [training] [INFO] Starting training...
+2025-11-26 16:52:32,665 [tensorflow] [INFO] Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+2025-11-26 16:52:32,813 [tensorflow] [INFO] Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+2025-11-26 16:52:33,265 [tensorflow] [INFO] Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+2025-11-26 16:52:33,268 [tensorflow] [INFO] Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+2025-11-26 16:52:33,850 [tensorflow] [INFO] Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+2025-11-26 16:52:33,854 [tensorflow] [INFO] Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+2025-11-26 16:52:33,855 [tensorflow] [INFO] Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+2025-11-26 16:52:33,856 [tensorflow] [INFO] Reduce to /job:localhost/replica:0/task:0/device:CPU:0 then broadcast to ('/job:localhost/replica:0/task:0/device:CPU:0',).
+Epoch 1/500
+2025-11-26 16:52:36,019 [tensorflow] [INFO] Collective all_reduce tensors: 56 all_reduces, num_devices = 4, group_size = 4, implementation = CommunicationImplementation.NCCL, num_packs = 1

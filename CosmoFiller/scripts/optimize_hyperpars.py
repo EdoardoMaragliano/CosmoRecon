@@ -10,7 +10,7 @@ from tensorflow import keras
 from sklearn.model_selection import train_test_split
 from datetime import datetime
 import optuna
-from InpaintingModel import InpaintingModel
+from inpainting import UNet, MaskedInpaintingModel, MaskedInpaintingUNet
 
 # =========================================
 # Parametri generali
@@ -144,7 +144,7 @@ def train_model(batch_size, learning_rate):
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
         mask_channels = 2 if use_mask else 1
-        base_model_obj = InpaintingModel(input_field=INPUT_FIELD, norm_val=density_normalization)
+        base_model_obj = UNet(input_field=INPUT_FIELD, norm_val=density_normalization)
         model = base_model_obj.prepare_model(
             input_size=(FIELD_SIZE, FIELD_SIZE, FIELD_SIZE, mask_channels)
         )

@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
 import os
+
+import sys
+# Inserisci la root del progetto in sys.path
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+
 import glob
 import argparse
 import logging
-import sys
+
 import json
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from sklearn.model_selection import train_test_split
-from InpaintingModel import InpaintingModel
 from datetime import datetime
+from CosmoFiller.inpainting import UNet
+from CosmoFiller.datahandler import create_dataset
+from CosmoFiller.utils import setup_logger
 
 start_time = datetime.now()  # inizio timer
 
@@ -74,12 +84,16 @@ density_normalization = args.density_normalization
 for h in logging.root.handlers[:]:
     logging.root.removeHandler(h)
 
+log_path = os.path.join(args.output_dir, 'logs', args.log_file)
+os.makedirs(os.path.join(args.output_dir, 'logs'), exist_ok=True)
+    
+
 # Main logger
 logging.basicConfig(
     level=logging.INFO if not args.debug else logging.DEBUG,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(args.output_dir, args.log_file)),
+        logging.FileHandler(log_path),
         logging.StreamHandler(sys.stdout)
     ],
     force=True
@@ -171,90 +185,9 @@ for y in y_valid[:3]:
 
 logging.info(f"Training samples: {len(x_train)}, Validation samples: {len(x_valid)}")
 
-# ============================
-# Data parsing functions
-# ============================
-def parse_fn(obs_path, true_path, mask_path=None, single_mask=None, use_mask=True):
-    obs = tf.numpy_function(lambda f: np.load(f).astype(np.float32)/density_normalization, [obs_path], tf.float32)
-    true = tf.numpy_function(lambda f: np.load(f).astype(np.float32)/density_normalization, [true_path], tf.float32)
-    obs = tf.expand_dims(obs, axis=-1)
-    true = tf.expand_dims(true, axis=-1)
-
-    if use_mask:
-        if single_mask is not None:
-            # Use the provided single mask for all samples
-            mask = tf.convert_to_tensor(single_mask, dtype=tf.float32)
-            logging.debug("Using single mask with shape: %s", str(mask.shape))
-            # Expand dimensions for tf compatibility
-            mask = tf.expand_dims(mask, axis=-1)
-            logging.debug("Expanded single mask shape: %s", str(mask.shape))
-        else:
-            # Load different masks for each sample
-            mask = tf.numpy_function(lambda f: np.load(f), [mask_path], tf.float32)
-            logging.debug("Loaded mask from %s with shape: %s", mask_path.numpy(), str(mask.shape))
-            # Expand dimensions for tf compatibility
-            mask = tf.expand_dims(mask, axis=-1)
-            logging.debug("Expanded mask shape: %s", str(mask.shape))
-        x = tf.concat([obs, mask], axis=-1)
-        x.set_shape((args.field_size, args.field_size, args.field_size, 2))
-        logging.debug("Input and mask concatenated. Shape is: %s", str(x.shape))
-        logging.debug("Channel 1 is obs, channel 2 is mask")
-        true.set_shape((args.field_size, args.field_size, args.field_size, 1))
-        mask.set_shape((args.field_size, args.field_size, args.field_size, 1))
-        return (x, true, mask)
-    else:
-        x = obs
-        logging.debug("Single channel input (obs only)")
-        x.set_shape((args.field_size, args.field_size, args.field_size, 1))
-        true.set_shape((args.field_size, args.field_size, args.field_size, 1))
-        return (x, true)
-
-def create_dataset(x_files, y_files, mask_files=None, single_mask=None, batch_size=args.batch_size,
-                   shuffle=True, use_mask=True, repeat=False, drop_remainder=args.drop_remainder):
-    """Creates a tf.data.Dataset from file paths with optional masks."""
-
-    logging.debug("create_dataset called with: %d x_files, %d y_files, mask_files=%s, single_mask=%s, batch_size=%d, shuffle=%s, use_mask=%s, repeat=%s", 
-        len(x_files), len(y_files), str(mask_files is not None), str(single_mask is not None), batch_size, str(shuffle), str(use_mask), str(repeat))
-    
-    if use_mask and single_mask is not None:
-        # create dataset with single mask for all samples
-        dataset = tf.data.Dataset.from_tensor_slices((x_files, y_files))
-        logging.debug("Dataset created from x_files and y_files only. Mapping with single_mask.")
-        # add the same mask to all samples in the dataset
-        dataset = dataset.map(lambda x,y: parse_fn(x,y,single_mask=single_mask,use_mask=True),\
-                               num_parallel_calls=tf.data.AUTOTUNE)
-
-    elif use_mask and mask_files is not None:
-        # create dataset with individual masks for each sample
-        dataset = tf.data.Dataset.from_tensor_slices((x_files, y_files, mask_files))
-        logging.debug("Dataset created from x_files, y_files, and mask_files. Mapping with mask_path.")
-        dataset = dataset.map(lambda x,y,m: parse_fn(x,y,mask_path=m,use_mask=True),\
-                               num_parallel_calls=tf.data.AUTOTUNE)
-    
-    else:
-        # create dataset without masks
-        dataset = tf.data.Dataset.from_tensor_slices((x_files, y_files))
-        logging.debug("Dataset created from x_files and y_files only. Mapping without mask.")
-        dataset = dataset.map(lambda x,y: parse_fn(x,y,use_mask=False),\
-                               num_parallel_calls=tf.data.AUTOTUNE)
-
-    if shuffle:
-        logging.debug("Shuffling dataset with buffer size %d", min(len(x_files), 16))
-        dataset = dataset.shuffle(buffer_size=len(x_files), reshuffle_each_iteration=shuffle)
-    else:
-        logging.debug("No shuffle applied to dataset.")
-
-    if repeat:
-        logging.debug("Repeating dataset indefinitely.")
-        dataset = dataset.repeat()
-
-    logging.debug("Batching dataset with batch_size=%d", batch_size)
-    dataset = dataset.batch(batch_size, drop_remainder=drop_remainder).prefetch(tf.data.AUTOTUNE)
-    logging.debug("Dataset ready. Returning tf.data.Dataset object.")
-
-    return dataset
-
-
+############################
+## create datasets
+###########################
 train_dataset = create_dataset(
     x_train, y_train,
     mask_files = mask_train if mask_train is not None else None,
@@ -262,7 +195,10 @@ train_dataset = create_dataset(
     batch_size = args.batch_size,
     use_mask = use_mask,
     shuffle = True,
-    repeat = args.repeat_dataset
+    repeat = args.repeat_dataset,
+    drop_remainder=False,
+    field_size=args.field_size,
+    norm_val=density_normalization
     )
 
 logging.info('train dataset has shape: %s', str(train_dataset))
@@ -274,61 +210,13 @@ val_dataset = create_dataset(
     batch_size = args.batch_size,
     shuffle = False,                  # No shuffle for validation
     use_mask = use_mask,
-    repeat = False                    # No repeat for validation
+    repeat = False,                    # No repeat for validation
+    drop_remainder=False,
+    field_size=args.field_size,
+    norm_val=density_normalization
 )
 
 logging.info('val dataset has shape: %s', str(val_dataset))
-
-# ============================
-# Masked loss
-# ============================
-def masked_mse_loss(y_true, y_pred, mask=None):
-    if mask is None:
-        # MSE classico su tutto il volume
-        return tf.reduce_mean(tf.square(y_true - y_pred))
-    else:
-        # MSE mascherato solo sulle regioni missing
-        missing_mask = 1.0 - mask
-        squared_error = tf.square(y_true - y_pred)
-        masked_error = squared_error * missing_mask
-        # Se la maschera è tutta 1, la loss sarà zero (nessuna regione da ricostruire)
-        return tf.reduce_sum(masked_error) / (tf.reduce_sum(missing_mask) + 1e-8)
-
-# ============================
-# Custom training model (commented out for standard MSE)
-# ============================
-# class MaskedInpaintingModel(keras.Model):
-#     def train_step(self, data):
-#         """Custom training step with masked loss or standard MSE."""
-#         if use_mask:
-#             x, y_true, mask = data
-#             with tf.GradientTape() as tape:
-#                 y_pred = self(x, training=True)
-#                 loss = masked_mse_loss(y_true, y_pred, mask)
-#             grads = tape.gradient(loss, self.trainable_variables)
-#             self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-#             return {"loss": loss}
-#         else:
-#             x, y_true = data
-#             with tf.GradientTape() as tape:
-#                 y_pred = self(x, training=True)
-#                 loss = masked_mse_loss(y_true, y_pred)
-#             grads = tape.gradient(loss, self.trainable_variables)
-#             self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-#             return {"loss": loss}
-#
-#     def test_step(self, data):
-#         """Custom validation step with masked loss or standard MSE."""
-#         if use_mask:
-#             x, y_true, mask = data
-#             y_pred = self(x, training=False)
-#             val_loss = masked_mse_loss(y_true, y_pred, mask)
-#             return {"loss": val_loss}
-#         else:
-#             x, y_true = data
-#             y_pred = self(x, training=False)
-#             val_loss = masked_mse_loss(y_true, y_pred)
-#             return {"loss": val_loss}
 
 # ============================
 # Build and compile model
@@ -346,14 +234,13 @@ with strategy.scope():
    
     mask_channels = 2 if use_mask else 1
 
-    base_model_obj = InpaintingModel(input_field=args.input_field, norm_val=density_normalization)
+    base_model_obj = UNet(input_field=args.input_field, norm_val=density_normalization)
     base_model_obj.set_logger(logging)
     
     base_model = base_model_obj.prepare_model(
         input_size=(args.field_size, args.field_size, args.field_size, mask_channels)
         )
-    
-    # masked_model = MaskedInpaintingModel(inputs=base_model.input, outputs=base_model.output)
+
     base_model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate, amsgrad=True, global_clipnorm=1e-2),
         loss=["mean_squared_error"],
@@ -367,8 +254,8 @@ logging.info("Model built and compiled successfully")
 # ============================
 # Callbacks
 # ============================
-from EpochCheckpoint import EpochCheckpoint
-from tensorflow.keras.callbacks import CSVLogger
+from CosmoFiller.checkpoints import EpochCheckpoint
+from keras.callbacks import CSVLogger
 
 # personalized callback to save every N epochs
 checkpoint_cb = EpochCheckpoint(
