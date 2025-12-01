@@ -5,9 +5,24 @@ import glob
 import json
 import logging
 from datetime import datetime
-
 import numpy as np
 import tensorflow as tf
+
+# Limit TensorFlow to use only two GPUs (if available)
+physical_gpus = tf.config.list_physical_devices('GPU')
+if physical_gpus:
+    try:
+        if len(physical_gpus) >= 2:
+            tf.config.set_visible_devices(physical_gpus[2:4], 'GPU')
+        else:
+            tf.config.set_visible_devices(physical_gpus, 'GPU')
+        # Enable memory growth for the (visible) GPUs
+        for gpu in tf.config.list_physical_devices('GPU'):
+            tf.config.experimental.set_memory_growth(gpu, False)
+    except Exception as e:
+        # If TF has already initialized GPUs this may fail; warn and continue
+        print(f"Warning: could not configure GPUs: {e}")
+
 from tensorflow import keras
 from sklearn.model_selection import train_test_split
 
@@ -62,6 +77,7 @@ if __name__ == "__main__":
     parser.add_argument('--dropout', action='store_true', help='Use dropout in bottleneck')
     parser.add_argument('--dropout_rate', type=float, default=0.1, help='Dropout rate')
     parser.add_argument('--global_clipnorm', type=float, default=1.0, help='Gradient clipnorm (sensible default)')
+    parser.add_argument('--patience', type=int, default=80, help='Early stopping patience')
 
     args = parser.parse_args()
     # Load params from JSON if provided (overrides CLI where applicable)
@@ -85,7 +101,7 @@ if __name__ == "__main__":
     os.makedirs(os.path.join(args.output_dir, 'logs'), exist_ok=True)
 
     # -------------------------------
-    # Setup logging
+    # Setup logger
     # -------------------------------
     # Clear root handlers
     for h in logging.root.handlers[:]:
@@ -101,7 +117,7 @@ if __name__ == "__main__":
         ],
         force=True
     )
-    logger = logging.getLogger("training")
+    logger = logging.getLogger(__name__)
     logger.info("Starting training script")
 
     # -------------------------------
@@ -119,8 +135,9 @@ if __name__ == "__main__":
 
     if args.use_mask and mask_files and len(mask_files) == 1:
         single_mask = np.load(mask_files[0]).astype(np.float32)
-        mask_files = None
         logger.info(f"Using single mask for all samples: {mask_files[0]}")
+        # Set mask_files to None to indicate single mask usage 
+        mask_files = None
     else:
         single_mask = None
 
@@ -128,10 +145,17 @@ if __name__ == "__main__":
     # Train/validation split
     # -------------------------------
     if args.use_mask and mask_files is not None:
+        #many masks case
         x_train, x_valid, y_train, y_valid, mask_train, mask_valid = train_test_split(
             x_files, y_files, mask_files, test_size=0.2, shuffle=False)
-    else:
+    elif args.use_mask and mask_files is None and single_mask is not None:
+        # single mask case
         x_train, x_valid, y_train, y_valid = train_test_split(x_files, y_files, test_size=0.2, shuffle=False)
+        mask_train = mask_valid = None
+    elif args.use_mask==False:
+        # no mask case
+        x_train, x_valid, y_train, y_valid = train_test_split(x_files, y_files, test_size=0.2, shuffle=False)
+        mask_files = None
         mask_train = mask_valid = None
 
     logger.info(f"Train samples: {len(x_train)}, Validation samples: {len(x_valid)}")
@@ -141,18 +165,27 @@ if __name__ == "__main__":
     # -------------------------------
     train_dataset = create_dataset(
         x_train, y_train,
-        mask_files=mask_train, single_mask=single_mask,
-        batch_size=args.batch_size, use_mask=args.use_mask,
-        repeat=True, drop_remainder=True,
+        #mask_files=mask_train, 
+        single_mask=single_mask,
+        batch_size=args.batch_size, 
+        use_mask=args.use_mask,
+        repeat=False, 
+        drop_remainder=True,
         field_size=args.field_size,
         norm_val=args.density_normalization
     )
 
+    for x_batch, y_batch, w_batch in train_dataset.take(1):
+        logger.info(f"x_batch shape: {x_batch.shape}, y_batch shape: {y_batch.shape}, w_batch shape: {w_batch.shape}")
+
     val_dataset = create_dataset(
         x_valid, y_valid,
-        mask_files=mask_valid, single_mask=single_mask,
-        batch_size=args.batch_size, use_mask=args.use_mask,
-        repeat=False, drop_remainder=False,
+        #mask_files=mask_valid, 
+        single_mask=single_mask,
+        batch_size=args.batch_size, 
+        use_mask=args.use_mask,
+        repeat=False, 
+        drop_remainder=False,
         field_size=args.field_size,
         norm_val=args.density_normalization
     )
@@ -163,11 +196,11 @@ if __name__ == "__main__":
     strategy = tf.distribute.MirroredStrategy()
     logger.info(f"Number of devices: {strategy.num_replicas_in_sync}")
 
-    input_channels = 2 if args.use_mask else 1
+    input_channels = 1 
     input_size = (args.field_size, args.field_size, args.field_size, input_channels)
 
     with strategy.scope():
-        model = MaskedInpaintingUNet(
+        inpainter = MaskedInpaintingUNet(
             input_size=input_size,
             base_filters=args.base_filters,
             min_size=args.min_size,
@@ -179,41 +212,45 @@ if __name__ == "__main__":
         )
 
         optimizer = keras.optimizers.Adam(learning_rate=args.learning_rate, )
+
         if args.global_clipnorm and args.global_clipnorm > 0:
             optimizer = keras.optimizers.Adam(learning_rate=args.learning_rate, clipnorm=float(args.global_clipnorm))
 
-        model.compile(
+        inpainter.unet.compile(
             optimizer=optimizer,
-            loss=None,  # masked loss è gestita internamente
+            loss='mean_squared_error',
             metrics=['mean_squared_error']
         )
+    logger.info("Model compiled successfully. Adding callbacks...")
 
     # -------------------------------
     # Callbacks
     # -------------------------------
     checkpoint_cb = SaveEveryNEpoch(
         filepath=os.path.join(args.output_dir, 'store_models', 'model_{epoch:03d}.keras'),
-        period=10
+        period=100
     )
     earlystop_cb = keras.callbacks.EarlyStopping(
-        monitor='val_loss', patience=20, restore_best_weights=True
+        monitor='val_loss', patience=args.patience,
+        restore_best_weights=True, verbose=2
     )
     csv_logger = keras.callbacks.CSVLogger(
         os.path.join(args.output_dir, 'history.csv'), append=False
     )
-
+    logger.info("Callbacks created.")
     # -------------------------------
     # Training
     # -------------------------------
     logger.info("Starting training...")
-    model.fit(
+    inpainter.unet.fit(
         train_dataset,
         validation_data=val_dataset,
         epochs=args.epochs,
         callbacks=[checkpoint_cb, earlystop_cb, csv_logger],
         verbose=2
     )
-
+    logger.info("Training completed.")
+    logger.info("Evaluating on validation set...")
     # -------------------------------
     # Evaluation: save predicted fields
     # -------------------------------
@@ -227,7 +264,7 @@ if __name__ == "__main__":
     )
 
     logger.info("Predicting on validation set...")
-    predictions = model.predict(val_dataset_eval)
+    predictions = inpainter.unet.predict(val_dataset_eval)
     for i, pred in enumerate(predictions):
         pred_field = pred[..., 0] * args.density_normalization
 
@@ -235,7 +272,7 @@ if __name__ == "__main__":
             obs_sample = np.load(x_valid[i]) * single_mask
     
             # join the observed field + predicted field in masked regions
-            pred_field = np.where(single_mask[..., 0]==1,obs_sample, pred_field)
+            pred_field = obs_sample * single_mask + pred_field * (1 - single_mask)
 
         np.save(os.path.join(args.output_dir, 'output_data', f'pred_field_{i:03d}.npy'), pred_field)
 

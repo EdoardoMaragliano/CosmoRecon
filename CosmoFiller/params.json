@@ -8,10 +8,10 @@
     "base_filters": 16,
     "batch_size": 16,
     "epochs": 500,
-    "save_freq": 25,
+    "save_freq": 100,
     "learning_rate": 1e-4,
     "log_file": "train.log",
-    "use_mask": false,
+    "use_mask": true,
     "debug": true,
     "density_normalization": 20.0
 }

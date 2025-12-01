@@ -20,7 +20,7 @@ from sklearn.model_selection import train_test_split
 from datetime import datetime
 from CosmoFiller.inpainting import UNet
 from CosmoFiller.datahandler import create_dataset
-from CosmoFiller.utils import setup_logger
+from CosmoFiller.utils.loggers import setup_logger
 
 start_time = datetime.now()  # inizio timer
 

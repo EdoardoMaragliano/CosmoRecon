@@ -14,6 +14,8 @@ from tensorflow import keras
 import numpy as np
 import logging
 
+logger = logging.getLogger(__name__)
+
 from CosmoFiller.utils.loggers import setup_logger
 
 # -------------------------
@@ -117,9 +119,6 @@ class UNet:
             x = keras.layers.Conv3DTranspose(filters, (3,3,3), strides=(2,2,2), padding='same')(x)
             x = keras.layers.concatenate([x, convs[d]], axis=-1)
 
-
-
-
         # Output layer (non-negative)
         outputs = keras.layers.Conv3D(1, (3,3,3), padding='same', activation=self.output_activation, dtype='float32')(x)
 
@@ -129,154 +128,10 @@ class UNet:
 # MASKED INPAINTING MODEL (BASED ON UNet MODEL)
 ####################################################
 
-# -----------------------------
-# Masked MSE loss used by model
-# -----------------------------
-def masked_mse_loss(y_true, y_pred, mask):
-    """Masked MSE: average only on missing voxels (mask==0)."""
-    # mask: 1 where observed, 0 where missing
-    missing = 1.0 - mask
-    se = tf.square(y_true - y_pred) * missing
-    denom = tf.reduce_sum(missing) + 1e-8
-    return tf.reduce_sum(se) / denom
-
-
-# -----------------------------
-# Custom Model to support masked training
-# -----------------------------
-class MaskedInpaintingModel(keras.Model):
-    """
-    MaskedInpaintingModel(keras.Model)
-
-    A Keras Model subclass that implements custom training and testing steps to
-    support optional masked inpainting losses.
-
-    This model expects its forward pass (call) to produce predictions compatible
-    with the target y tensors. It provides an option to compute a masked mean
-    squared error when a binary/float mask is supplied.
-
-    Parameters
-    ----------
-    use_mask : bool, optional
-        If True, the model's train_step and test_step expect incoming batch data
-        to be tuples of (x, y_true, mask). If False, they expect (x, y_true).
-        Defaults to False.
-    *args, **kwargs :
-        Additional positional and keyword arguments forwarded to keras.Model.
-
-    Behavior
-    --------
-    - train_step(data):
-        - If use_mask is True, unpacks data as (x, y_true, mask). Otherwise uses
-          (x, y_true) and sets mask = None.
-        - Runs a forward pass y_pred = self(x, training=True).
-        - Computes loss:
-            - If use_mask: calls masked_mse_loss(y_true, y_pred, mask).
-            - Else: computes standard mean squared error: mean(square(y_true - y_pred)).
-        - Adds any model regularization losses present in self.losses.
-        - Computes gradients and applies them via self.optimizer.
-        - Updates compiled metrics via self.compiled_metrics.update_state(y_true, y_pred).
-        - Returns a dict mapping metric names to scalar results and includes a
-          'loss' entry holding the computed loss tensor.
-
-    - test_step(data):
-        - Same unpacking logic as train_step.
-        - Runs forward pass with training=False and computes loss using the same
-          masked or unmasked MSE logic.
-        - Updates compiled metrics and returns a dict of metric results including 'loss'.
-
-    Example usage
-    -------------
-    - When not using masks:
-        model = MaskedInpaintingModel(..., use_mask=False)
-        model.compile(optimizer=..., metrics=[...])
-        model.fit(dataset_of_pairs)  # dataset yields (x, y)
-
-    - When using masks:
-        model = MaskedInpaintingModel(..., use_mask=True)
-        model.compile(optimizer=..., metrics=[...])
-        model.fit(dataset_of_triplets)  # dataset yields (x, y, mask)
-
-    - In combo with UNet:
-        model_obj = UNet(
-            base_filters=args.base_filters,
-            min_size=args.min_size,
-            dropout_layer=args.dropout,
-            dropout_rate=args.dropout_rate,
-            input_field=args.input_field,
-            norm_val=args.density_normalization
-        )
-        model_obj.set_logger(logging)
-        base_unet = model_obj.prepare_model(input_size=input_size)
-
-        # Wrap in custom model for masked training
-        masked_model = MaskedInpaintingModel(
-            inputs=base_unet.input, 
-            outputs=base_unet.output, 
-            use_mask=use_mask)
-
-        optimizer = keras.optimizers.Adam(learning_rate=args.learning_rate)
-
-        masked_model.compile(
-            optimizer=optimizer, 
-            metrics=[keras.metrics.MeanSquaredError(name='mse')])
-
-
-    """
-
-    def __init__(self, *args, use_mask=False, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.use_mask = use_mask
-
-    def train_step(self, data):
-        # data can be (x, y) or (x, y, mask)
-        if self.use_mask:
-            x, y_true, mask = data
-        else:
-            x, y_true = data
-            mask = None
-
-        with tf.GradientTape() as tape:
-            y_pred = self(x, training=True)
-            if self.use_mask:
-                loss = masked_mse_loss(y_true, y_pred, mask)
-            else:
-                loss = tf.reduce_mean(tf.square(y_true - y_pred))
-
-            # add regularization losses if present
-            loss += sum(self.losses)
-
-        trainable_vars = self.trainable_variables
-        grads = tape.gradient(loss, trainable_vars)
-        self.optimizer.apply_gradients(zip(grads, trainable_vars))
-
-        # metrics
-        self.compiled_metrics.update_state(y_true, y_pred)
-        metrics = {m.name: m.result() for m in self.metrics}
-        metrics['loss'] = loss
-        return metrics
-
-    def test_step(self, data):
-        if self.use_mask:
-            x, y_true, mask = data
-            y_pred = self(x, training=False)
-            loss = masked_mse_loss(y_true, y_pred, mask)
-        else:
-            x, y_true = data
-            y_pred = self(x, training=False)
-            loss = tf.reduce_mean(tf.square(y_true - y_pred))
-
-        self.compiled_metrics.update_state(y_true, y_pred)
-        metrics = {m.name: m.result() for m in self.metrics}
-        metrics['loss'] = loss
-        return metrics
-
-
-
 # =============================
 # MaskedInpaintingUNet
 # =============================
-class MaskedInpaintingUNet(keras.Model):
+class MaskedInpaintingUNet:
     """
     MaskedInpaintingUNet
     --------------------
@@ -316,28 +171,26 @@ class MaskedInpaintingUNet(keras.Model):
         Normalization constant used to compute the shifted ReLU offset.
     use_mask : bool
         If True, training/test steps expect and use a mask tensor.
-    logger : logging.Logger or None
+    logger : logger.Logger or None
         Optional logger for informational messages.
 
-    Public methods
-    --------------
-    call(inputs, training=False)
-        Forward pass delegating to the internal U-Net model.
-    train_step(data)
-        Custom train step supporting optional masks.
-    test_step(data)
-        Custom test step supporting optional masks.
-    masked_mse_loss(y_true, y_pred, mask)
-        Compute MSE averaged only over missing voxels (mask == 0).
+    
 
     """
-    def __init__(self, input_size=(128,128,128,2), base_filters=16, min_size=4,
-                 dropout_layer=False, dropout_rate=0.1,
-                 input_field='rho', norm_val=40, use_mask=False, logger=None):
+    def __init__(self, 
+                input_size=(128,128,128,1),
+                base_filters=16, min_size=4,
+                dropout_layer=False, dropout_rate=0.1,
+                input_field='rho', 
+                norm_val=40, 
+                use_mask=False, 
+                logger=None,
+                ):
         super().__init__()
         self.use_mask = use_mask
         self.logger = logger
         self.norm_val = norm_val
+
 
         # output activation
         self.output_activation = self.shifted_relu if input_field=='delta' else tf.nn.relu
@@ -348,6 +201,7 @@ class MaskedInpaintingUNet(keras.Model):
                                      min_size=min_size,
                                      dropout_layer=dropout_layer,
                                      dropout_rate=dropout_rate)
+        
 
     # ----------------------------
     # shifted ReLU per delta
@@ -355,6 +209,7 @@ class MaskedInpaintingUNet(keras.Model):
     def shifted_relu(self, x):
         min_val = -1.0/self.norm_val
         return tf.nn.relu(x - min_val) + min_val
+
 
     # ----------------------------
     # Costruzione U-Net 3D
@@ -397,62 +252,5 @@ class MaskedInpaintingUNet(keras.Model):
 
         return keras.Model(inputs=inputs, outputs=outputs)
 
-    # ----------------------------
-    # Forward pass
-    # ----------------------------
-    def call(self, inputs, training=False):
-        return self.unet(inputs, training=training)
 
-    # ----------------------------
-    # Custom train step
-    # ----------------------------
-    def train_step(self, data):
-        if self.use_mask:
-            x, y_true, mask = data
-        else:
-            x, y_true = data
-            mask = None
-
-        with tf.GradientTape() as tape:
-            y_pred = self(x, training=True)
-            if self.use_mask:
-                loss = self.masked_mse_loss(y_true, y_pred, mask)
-            else:
-                loss = tf.reduce_mean(tf.square(y_true - y_pred))
-            loss += sum(self.losses)
-
-        grads = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-
-        # aggiornamento metriche
-        self.compiled_metrics.update_state(y_true, y_pred)
-        metrics = {m.name: m.result() for m in self.metrics}
-        metrics['loss'] = loss
-        return metrics
-
-    # ----------------------------
-    # Custom test step
-    # ----------------------------
-    def test_step(self, data):
-        if self.use_mask:
-            x, y_true, mask = data
-            y_pred = self(x, training=False)
-            loss = self.masked_mse_loss(y_true, y_pred, mask)
-        else:
-            x, y_true = data
-            y_pred = self(x, training=False)
-            loss = tf.reduce_mean(tf.square(y_true - y_pred))
-
-        self.compiled_metrics.update_state(y_true, y_pred)
-        metrics = {m.name: m.result() for m in self.metrics}
-        metrics['loss'] = loss
-        return metrics
-
-    # ----------------------------
-    # Masked MSE Loss
-    # ----------------------------
-    def masked_mse_loss(self, y_true, y_pred, mask):
-        missing = 1.0 - mask
-        squared_error = tf.square(y_true - y_pred)
-        masked_error = squared_error * missing
-        return tf.reduce_sum(masked_error) / (tf.reduce_sum(missing) + 1e-8)
+# ============================
