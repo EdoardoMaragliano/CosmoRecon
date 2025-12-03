@@ -32,7 +32,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 # Import your modules
-from CosmoFiller.inpainting import MaskedInpaintingUNet
+from CosmoFiller.inpainting import MaskedInpaintingUNet, MaskedMSE
 from CosmoFiller.checkpoints import SaveEveryNEpoch
 from CosmoFiller.datahandler import create_dataset
 
@@ -133,30 +133,30 @@ if __name__ == "__main__":
         logger.info(f"mask_files are: {mask_files[0]}")
     logger.info(f"Collected {len(x_files)} observed files, {len(y_files)} true files, and {len(mask_files) if mask_files else 0} mask files")
 
-    if args.use_mask and mask_files and len(mask_files) == 1:
-        single_mask = np.load(mask_files[0]).astype(np.float32)
-        logger.info(f"Using single mask for all samples: {mask_files[0]}")
-        # Set mask_files to None to indicate single mask usage 
-        mask_files = None
-    else:
-        single_mask = None
+    # -------------------------------
+    # Handle single vs multiple mask
+    # -------------------------------
+    single_mask = None
+    if args.use_mask:
+        if mask_files is None or len(mask_files)==0:
+            raise ValueError("use_mask=True but no mask files found")
+        elif len(mask_files)==1:
+            single_mask = np.load(mask_files[0]).astype(np.float32)
+            logger.info(f"Using single mask for all samples: {mask_files[0]}")
+        else:
+            raise NotImplementedError("Multiple mask files are not supported in this script")
 
     # -------------------------------
     # Train/validation split
     # -------------------------------
-    if args.use_mask and mask_files is not None:
-        #many masks case
-        x_train, x_valid, y_train, y_valid, mask_train, mask_valid = train_test_split(
-            x_files, y_files, mask_files, test_size=0.2, shuffle=False)
-    elif args.use_mask and mask_files is None and single_mask is not None:
+    if args.use_mask:
         # single mask case
         x_train, x_valid, y_train, y_valid = train_test_split(x_files, y_files, test_size=0.2, shuffle=False)
-        mask_train = mask_valid = None
-    elif args.use_mask==False:
+        
+    else:
         # no mask case
         x_train, x_valid, y_train, y_valid = train_test_split(x_files, y_files, test_size=0.2, shuffle=False)
-        mask_files = None
-        mask_train = mask_valid = None
+
 
     logger.info(f"Train samples: {len(x_train)}, Validation samples: {len(x_valid)}")
 
@@ -164,23 +164,29 @@ if __name__ == "__main__":
     # Create datasets
     # -------------------------------
     train_dataset = create_dataset(
-        x_train, y_train,
-        #mask_files=mask_train, 
+        x_train, y_train, 
         single_mask=single_mask,
         batch_size=args.batch_size, 
         use_mask=args.use_mask,
-        repeat=False, 
-        drop_remainder=True,
+        repeat=args.repeat_dataset, 
+        drop_remainder=args.drop_remainder,
         field_size=args.field_size,
         norm_val=args.density_normalization
     )
 
-    for x_batch, y_batch, w_batch in train_dataset.take(1):
-        logger.info(f"x_batch shape: {x_batch.shape}, y_batch shape: {y_batch.shape}, w_batch shape: {w_batch.shape}")
-
+    # Log a batch shape
+    try:
+        if args.use_mask:
+            x_batch, y_batch, w_batch = next(iter(train_dataset))
+            logger.info(f"x_batch shape: {x_batch.shape}, y_batch shape: {y_batch.shape}, mask shape: {w_batch.shape}")
+        else:
+            x_batch, y_batch = next(iter(train_dataset))
+            logger.info(f"x_batch shape: {x_batch.shape}, y_batch shape: {y_batch.shape}")
+    except Exception as e:
+        logger.warning(f"Could not inspect a batch: {e}")
+        
     val_dataset = create_dataset(
         x_valid, y_valid,
-        #mask_files=mask_valid, 
         single_mask=single_mask,
         batch_size=args.batch_size, 
         use_mask=args.use_mask,
@@ -216,10 +222,11 @@ if __name__ == "__main__":
         if args.global_clipnorm and args.global_clipnorm > 0:
             optimizer = keras.optimizers.Adam(learning_rate=args.learning_rate, clipnorm=float(args.global_clipnorm))
 
+        masked_mse_metric = MaskedMSE()
         inpainter.unet.compile(
             optimizer=optimizer,
-            loss='mean_squared_error',
-            metrics=['mean_squared_error']
+            loss=MaskedMSE(),
+            metrics=[masked_mse_metric]
         )
     logger.info("Model compiled successfully. Adding callbacks...")
 
@@ -256,7 +263,7 @@ if __name__ == "__main__":
     # -------------------------------
     val_dataset_eval = create_dataset(
         x_valid, y_valid,
-        mask_files=mask_valid, single_mask=single_mask,
+        single_mask=single_mask,
         batch_size=1, use_mask=args.use_mask,
         repeat=False, drop_remainder=False,
         field_size=args.field_size,

@@ -254,3 +254,16 @@ class MaskedInpaintingUNet:
 
 
 # ============================
+
+class MaskedMSE(tf.keras.losses.Loss):
+    def call(self, y_true, y_pred, sample_weight=None):
+        if sample_weight is None:
+            return tf.reduce_mean(tf.square(y_true - y_pred))
+
+        # sample_weight qui = mask
+        # vogliamo dare pesi solo dove mask=0 → missing = 1 - mask
+        missing = 1.0 - sample_weight
+
+        mse = tf.square(y_true - y_pred)
+        loss = tf.reduce_sum(missing * mse) / (tf.reduce_sum(missing) + 1e-8)
+        return loss
