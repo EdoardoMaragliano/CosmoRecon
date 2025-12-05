@@ -1,4 +1,11 @@
 # datahandler.py
+
+"""
+This module provides functions to create TensorFlow datasets for 3D cosmological field inpainting tasks.
+It supports loading observed fields, true fields, and optional masks from .npy files, normalizing them,
+and preparing them for training or evaluation with batching, shuffling, and prefetching.
+"""
+
 import os
 import logging
 logger = logging.getLogger(__name__)
@@ -13,109 +20,121 @@ from CosmoFiller.utils.loggers import setup_logger
 logger = setup_logger(__name__)
 
 
-def parse_fn(obs_path, true_path, mask_path=None, single_mask=None, use_mask=True,
-             field_size=128, norm_val=40):
+def parse_fn(obs_path, true_path, mask=None,
+             field_size=128, norm_val=40, channels=1):
     """
-    Parse input, target, and optional mask for a single 3D field sample.
-    
-    Parameters:
-        obs_path: str, path to observed field (.npy)
-        true_path: str, path to true field (.npy)
-        mask_path: str, path to mask (.npy) for this sample
-        single_mask: np.array, optional mask shared by all samples
-        use_mask: bool, whether to use mask channel
-        field_size: int, spatial size of the cube (NxNxN)
-        norm_val: float, normalization factor for fields
-        
-    Returns:
-        tuple: (x, y_true, mask) if use_mask else (x, y_true)
+    Load a single pair (observed, true) and optionally apply a global mask.
+
+    Parameters
+    ----------
+    obs_path : str
+        Path to observed volume (.npy)
+    true_path : str
+        Path to true volume (.npy)
+    mask : np.ndarray or None
+        Single 3D mask shared by all samples (float32 0/1)
+    channels : int
+        1  -> input = obs * mask
+        2  -> input = concat(obs * mask, mask)
+
+    Returns
+    -------
+    (x, y)  with shapes:
+        x : (N,N,N,channels)
+        y : (N,N,N,1)
     """
+    # Load volumes
     obs = tf.numpy_function(lambda f: np.load(f).astype(np.float32)/norm_val,
                             [obs_path], tf.float32)
     true = tf.numpy_function(lambda f: np.load(f).astype(np.float32)/norm_val,
                              [true_path], tf.float32)
-    obs = tf.expand_dims(obs, axis=-1)
-    true = tf.expand_dims(true, axis=-1)
 
-    if use_mask:
-        if single_mask is not None:
-            # Use the provided single mask for all samples
-            mask = tf.convert_to_tensor(single_mask, dtype=tf.float32)
-        else:
-            mask = tf.numpy_function(lambda f: np.load(f), [mask_path], tf.float32)
+    # Add channel dimension
+    obs = tf.expand_dims(obs, axis=-1)     # (N,N,N,1)
+    true = tf.expand_dims(true, axis=-1)   # (N,N,N,1)
 
-        mask = tf.expand_dims(mask, axis=-1)
-        mask.set_shape((field_size, field_size, field_size, 1))
-        obs.set_shape((field_size, field_size, field_size, 1))
-        true.set_shape((field_size, field_size, field_size, 1))
-        logger.debug(f"Loaded mask from {mask_path} with shape: {mask.shape}")
+    # Static shapes
+    obs.set_shape((field_size, field_size, field_size, 1))
+    true.set_shape((field_size, field_size, field_size, 1))
 
-        x = obs * mask
+    # ------ Apply mask if provided ------
+    if mask is not None:
+        mask_tf = tf.convert_to_tensor(mask, dtype=tf.float32)
+        mask_tf = tf.expand_dims(mask, axis=-1)
+        mask_tf.set_shape((field_size, field_size, field_size, 1))
+
+        masked_obs = obs * mask_tf
         logger.debug(f"Applied mask to observed data, shape: {obs.shape}")    
 
-        return (x, true, mask)
+        if channels==1:
+            x = masked_obs
+
+        elif channels==2:
+            x = tf.concat([masked_obs, mask_tf], axis=-1)
+
+        else:
+            raise ValueError("channels must be 1 or 2")
+    
     else:
         x = obs
-        x.set_shape((field_size, field_size, field_size, 1))
-        true.set_shape((field_size, field_size, field_size, 1))
-        logger.debug(f"Single channel input (obs only), shape: {x.shape}")
-        return (x, true)
 
-
-def create_dataset(x_files, y_files, mask_files=None, single_mask=None, batch_size=16,
-                   shuffle=True, use_mask=True, repeat=False, drop_remainder=False,
-                   field_size=128, norm_val=40):
-    """
-    Create a tf.data.Dataset from file lists with optional mask channel.
-    
-    Parameters:
-        x_files, y_files: lists of file paths
-        mask_files: optional list of masks
-        single_mask: optional shared mask
-        batch_size: int
-        shuffle: bool
-        use_mask: bool
-        repeat: bool
-        drop_remainder: bool
-        field_size: int
-        norm_val: float
+        if channels !=1:
+            raise ValueError("channels=2 reuires a mask")
         
-    Returns:
-        tf.data.Dataset
+    return x, true
+
+def create_dataset(x_files, y_files,
+                   batch_size=16,
+                   shuffle=True,
+                   repeat=False,
+                   drop_remainder=False,
+                   field_size=128,
+                   norm_val=40,
+                   mask=None,
+                   channels=1):
     """
-    logger.info(f"Creating dataset with {len(x_files)} samples. Use mask: {use_mask}")
-    
-    if use_mask==True and single_mask is not None:
-        dataset = tf.data.Dataset.from_tensor_slices((x_files, y_files))
-        logger.debug("Dataset created from x_files and y_files only. Mapping with single_mask.")
-        dataset = dataset.map(lambda x, y: parse_fn(x, y, single_mask=single_mask,
-                                                    use_mask=True,
-                                                    field_size=field_size,
-                                                    norm_val=norm_val),
-                              num_parallel_calls=8)
-    elif use_mask and mask_files is not None:
-        dataset = tf.data.Dataset.from_tensor_slices((x_files, y_files, mask_files))
-        logger.debug("Dataset created from x_files, y_files, and mask_files. Mapping with mask_path.")
-        dataset = dataset.map(lambda x, y, m: parse_fn(x, y, mask_path=m, use_mask=True,
-                                                       field_size=field_size,
-                                                       norm_val=norm_val),
-                              num_parallel_calls=8)
-    elif use_mask==False:
-        dataset = tf.data.Dataset.from_tensor_slices((x_files, y_files))
-        logger.debug("Dataset created from x_files and y_files only. Mapping without mask.")
-        dataset = dataset.map(lambda x, y: parse_fn(x, y, use_mask=False,
-                                                    field_size=field_size,
-                                                    norm_val=norm_val),
-                              num_parallel_calls=8)
+    Create a tf.data.Dataset with optional single global mask.
+
+    Parameters
+    ----------
+    x_files, y_files : list of str
+        Paths to observed and true volumes.
+    mask : np.ndarray or None
+        Single shared mask (N,N,N).
+    channels : int
+        1 = obs*mask
+        2 = concat(obs*mask, mask)
+
+    Returns
+    -------
+    tf.data.Dataset yielding (x_batch, y_batch)
+    """
+
+    logger.info(f"Creating dataset with {len(x_files)} samples, channels={channels}, mask={mask is not None}")
+
+    dataset = tf.data.Dataset.from_tensor_slices((x_files, y_files))
+
+    dataset = dataset.map(
+        lambda x, y: parse_fn(
+            x, y,
+            field_size=field_size,
+            norm_val=norm_val,
+            mask=mask,
+            channels=channels
+        ),
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
 
     if shuffle:
         dataset = dataset.shuffle(buffer_size=len(x_files), reshuffle_each_iteration=True)
         logger.debug("Dataset shuffled")
+
     if repeat:
         dataset = dataset.repeat()
         logger.debug("Dataset repeated indefinitely")
-        
-    dataset = dataset.batch(batch_size, drop_remainder=drop_remainder).prefetch(tf.data.AUTOTUNE)
+
+    dataset = dataset.batch(batch_size, drop_remainder=drop_remainder)
+    dataset = dataset.prefetch(tf.data.AUTOTUNE)
     logger.debug(f"Dataset batched with batch_size={batch_size}, drop_remainder={drop_remainder}")
-    
+
     return dataset

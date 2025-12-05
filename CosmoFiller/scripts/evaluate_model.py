@@ -15,7 +15,7 @@ physical_gpus = tf.config.list_physical_devices('GPU')
 if physical_gpus:
     try:
         if len(physical_gpus) >= 2:
-            tf.config.set_visible_devices(physical_gpus[2:4], 'GPU')
+            tf.config.set_visible_devices(physical_gpus[0:2], 'GPU')
         else:
             tf.config.set_visible_devices(physical_gpus, 'GPU')
         for gpu in tf.config.list_physical_devices('GPU'):

@@ -2,8 +2,10 @@
 Adaptive 3D U-Net for Hole-Filling in Galaxy Surveys
 ====================================================
 
-This module defines an adaptive 3D U-Net model for inpainting missing data in 3D fields, such as those found in galaxy surveys. The model can take an additional mask channel as input to indicate missing regions and uses a ReLU activation function at the output to ensure non-negative predictions.
-The model architecture is flexible, allowing for dynamic adjustment of depth based on input size and minimum feature map size. It also includes options for dropout regularization.
+This module defines an adaptive 3D U-Net model for inpainting missing data in 3D fields, such as those found in galaxy surveys. 
+The model can handle inputs with missing regions specified by a binary mask and is designed to produce non-negative outputs using ReLU activations.
+The model architecture is flexible, allowing for dynamic adjustment of depth based on input size and minimum feature map size. 
+It also includes options for dropout regularization.
 Author: [Edoardo Maragliano]
 Date: [9 September 2025]
 
@@ -227,8 +229,8 @@ class MaskedInpaintingUNet:
 
         # Encoder
         for d in range(depth):
-            x = keras.layers.Conv3D(filters, (3,3,3), activation='relu', padding='same')(x)
-            x = keras.layers.Conv3D(filters, (3,3,3), activation='relu', padding='same')(x)
+            x = keras.layers.Conv3D(filters, kernel_size=(3,3,3), activation='relu', padding='same')(x)
+            x = keras.layers.Conv3D(filters, kernel_size=(3,3,3), activation='relu', padding='same')(x)
             convs.append(x)
             x = keras.layers.MaxPooling3D((2,2,2))(x)
             filters *= 2
@@ -256,14 +258,167 @@ class MaskedInpaintingUNet:
 # ============================
 
 class MaskedMSE(tf.keras.losses.Loss):
-    def call(self, y_true, y_pred, sample_weight=None):
-        if sample_weight is None:
-            return tf.reduce_mean(tf.square(y_true - y_pred))
+    """
+    MaskedMSE for single mask, either in the 1 or two channel configuration
+    Computes Mean Squared Error only over missing voxels (mask == 0).
+    """
 
-        # sample_weight qui = mask
-        # vogliamo dare pesi solo dove mask=0 → missing = 1 - mask
-        missing = 1.0 - sample_weight
+    def __init__(self, mask, **kwargs):
+        super().__init__(**kwargs)
+        self.mask = tf.cast(mask, tf.float32)   # (D,H,W,1)
 
-        mse = tf.square(y_true - y_pred)
-        loss = tf.reduce_sum(missing * mse) / (tf.reduce_sum(missing) + 1e-8)
-        return loss
+    def call(self, y_true, y_pred):
+        diff = tf.square(y_true - y_pred)
+        masked_diff = diff * (1 - self.mask)
+        denom = tf.reduce_sum(1 - self.mask) + 1e-8
+        return tf.reduce_sum(masked_diff) / denom
+    
+    def get_config(self):
+        # Keras non può serializzare direttamente il tensore della mask
+        config = super().get_config()
+        config.update({"mask": None})  # serve solo per compatibilità
+        return config
+    
+    
+def compute_gradient(x):
+    # assume x: [batch, H, W, D]
+    gx = x[:, 1:, :, :] - x[:, :-1, :, :]
+    gy = x[:, :, 1:, :] - x[:, :, :-1, :]
+    gz = x[:, :, :, 1:] - x[:, :, :, :-1]
+
+    return gx, gy, gz
+
+
+def dilate_mask(mask, iterations=1):
+    """
+    Dilata la maschera usando MaxPool3D.
+    mask: [batch, H, W, D] o [batch, H, W, D, 1]
+    """
+    # Assicuriamo che ci sia il canale alla fine
+    if len(mask.shape) == 4:
+        mask = tf.expand_dims(mask, axis=-1)
+    
+    # Kernel 3x3x3 equivale a guardare i vicini immediati
+    # Padding SAME mantiene le dimensioni originali
+    for _ in range(iterations):
+        mask = tf.nn.max_pool3d(
+            mask, 
+            ksize=[1, 3, 3, 3, 1], 
+            strides=[1, 1, 1, 1, 1], 
+            padding='SAME'
+        )
+        
+    return tf.squeeze(mask, axis=-1)
+
+def prepare_mask_tensor(mask_array):
+    """
+    Utility per convertire la maschera numpy in tensore broadcastabile (1, H, W, D, 1).
+    """
+    mask_tensor = tf.cast(mask_array, tf.float32)
+    
+    # Gestione dimensioni per garantire (1, H, W, D, 1)
+    if len(mask_tensor.shape) == 3: # (H, W, D)
+        mask_tensor = mask_tensor[None, ..., None]
+    elif len(mask_tensor.shape) == 4: # (H, W, D, 1) o (1, H, W, D)
+        if mask_tensor.shape[0] != 1: 
+             mask_tensor = mask_tensor[None, ...] # Aggiungi batch dim se manca
+        if mask_tensor.shape[-1] != 1:
+             mask_tensor = mask_tensor[..., None] # Aggiungi channel dim se manca
+             
+    return mask_tensor
+
+class MaskedGradientLoss(tf.keras.losses.Loss):
+    def __init__(self, static_mask, dilation_iter=2, **kwargs):
+        """
+        static_mask: np.array (0=Buco, 1=Valido)
+        dilation_iter: Quanti pixel espandere la zona di controllo attorno al buco
+        """
+        super().__init__(**kwargs)
+        
+        # 1. Preparazione e Inversione (Hole = 1)
+        mask_tensor = prepare_mask_tensor(static_mask)
+        hole_mask = 1.0 - mask_tensor
+        
+        # 2. Dilatazione "One-Off" (fatta solo ora, non durante il training)
+        dilated_hole = hole_mask
+        for _ in range(dilation_iter):
+            dilated_hole = tf.nn.max_pool3d(
+                dilated_hole, 
+                ksize=[1, 3, 3, 3, 1], 
+                strides=[1, 1, 1, 1, 1], 
+                padding='SAME'
+            )
+        
+        # 3. Slicing per allineamento con i gradienti
+        # Rimuoviamo la batch dim (1) temporaneamente per slicing più pulito
+        dh = tf.squeeze(dilated_hole, axis=0) 
+        
+        # Salviamo le maschere sliced e riaggiungiamo la batch dim (None) per broadcasting
+        self.mask_x = dh[1:, :, :][None, ...]
+        self.mask_y = dh[:, 1:, :][None, ...]
+        self.mask_z = dh[:, :, 1:][None, ...]
+        
+        # 4. Pre-calcolo denominatori
+        self.denom_x = tf.reduce_sum(self.mask_x) + 1e-8
+        self.denom_y = tf.reduce_sum(self.mask_y) + 1e-8
+        self.denom_z = tf.reduce_sum(self.mask_z) + 1e-8
+
+    def call(self, y_true, y_pred):
+        # Calcolo gradienti
+        gx_t, gy_t, gz_t = compute_gradient(y_true)
+        gx_p, gy_p, gz_p = compute_gradient(y_pred)
+
+        # Calcolo Loss pesata sulle maschere dilatate pre-calcolate
+        term_x = tf.reduce_sum(tf.square(gx_t - gx_p) * self.mask_x) / self.denom_x
+        term_y = tf.reduce_sum(tf.square(gy_t - gy_p) * self.mask_y) / self.denom_y
+        term_z = tf.reduce_sum(tf.square(gz_t - gz_p) * self.mask_z) / self.denom_z
+
+        return term_x + term_y + term_z
+
+class MaskedGradientLoss(tf.keras.losses.Loss):
+    def __init__(self, static_mask, dilation_iter=2, **kwargs):
+        """
+        static_mask: np.array (0=Buco, 1=Valido)
+        dilation_iter: Quanti pixel espandere la zona di controllo attorno al buco
+        """
+        super().__init__(**kwargs)
+        
+        # 1. Preparazione e Inversione (Hole = 1)
+        mask_tensor = prepare_mask_tensor(static_mask)
+        hole_mask = 1.0 - mask_tensor
+        
+        # 2. Dilatazione "One-Off" (fatta solo ora, non durante il training)
+        dilated_hole = hole_mask
+        for _ in range(dilation_iter):
+            dilated_hole = tf.nn.max_pool3d(
+                dilated_hole, 
+                ksize=[1, 3, 3, 3, 1], 
+                strides=[1, 1, 1, 1, 1], 
+                padding='SAME'
+            )
+        
+        # 3. Slicing per allineamento con i gradienti
+        # Rimuoviamo la batch dim (1) temporaneamente per slicing più pulito
+        dh = tf.squeeze(dilated_hole, axis=0) 
+        
+        # Salviamo le maschere sliced e riaggiungiamo la batch dim (None) per broadcasting
+        self.mask_x = dh[1:, :, :][None, ...]
+        self.mask_y = dh[:, 1:, :][None, ...]
+        self.mask_z = dh[:, :, 1:][None, ...]
+        
+        # 4. Pre-calcolo denominatori
+        self.denom_x = tf.reduce_sum(self.mask_x) + 1e-8
+        self.denom_y = tf.reduce_sum(self.mask_y) + 1e-8
+        self.denom_z = tf.reduce_sum(self.mask_z) + 1e-8
+
+    def call(self, y_true, y_pred):
+        # Calcolo gradienti
+        gx_t, gy_t, gz_t = compute_gradient(y_true)
+        gx_p, gy_p, gz_p = compute_gradient(y_pred)
+
+        # Calcolo Loss pesata sulle maschere dilatate pre-calcolate
+        term_x = tf.reduce_sum(tf.square(gx_t - gx_p) * self.mask_x) / self.denom_x
+        term_y = tf.reduce_sum(tf.square(gy_t - gy_p) * self.mask_y) / self.denom_y
+        term_z = tf.reduce_sum(tf.square(gz_t - gz_p) * self.mask_z) / self.denom_z
+
+        return term_x + term_y + term_z

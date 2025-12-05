@@ -165,8 +165,9 @@ if __name__ == "__main__":
     # -------------------------------
     train_dataset = create_dataset(
         x_train, y_train, 
-        mask=single_mask,
+        single_mask=single_mask,
         batch_size=args.batch_size, 
+        use_mask=args.use_mask,
         repeat=args.repeat_dataset, 
         drop_remainder=args.drop_remainder,
         field_size=args.field_size,
@@ -186,8 +187,9 @@ if __name__ == "__main__":
         
     val_dataset = create_dataset(
         x_valid, y_valid,
-        mask=single_mask,
+        single_mask=single_mask,
         batch_size=args.batch_size, 
+        use_mask=args.use_mask,
         repeat=False, 
         drop_remainder=False,
         field_size=args.field_size,
@@ -220,14 +222,10 @@ if __name__ == "__main__":
         if args.global_clipnorm and args.global_clipnorm > 0:
             optimizer = keras.optimizers.Adam(learning_rate=args.learning_rate, clipnorm=float(args.global_clipnorm))
 
-
-        # define masked loss
-        single_mask_tf = tf.convert_to_tensor(single_mask[..., None], tf.float32)
-        masked_mse_metric = MaskedMSE(mask=single_mask_tf)
-
+        masked_mse_metric = MaskedMSE()
         inpainter.unet.compile(
             optimizer=optimizer,
-            loss=masked_mse_metric,
+            loss=MaskedMSE(),
             metrics=[masked_mse_metric]
         )
     logger.info("Model compiled successfully. Adding callbacks...")
@@ -265,8 +263,8 @@ if __name__ == "__main__":
     # -------------------------------
     val_dataset_eval = create_dataset(
         x_valid, y_valid,
-        mask=single_mask,
-        batch_size=1,
+        single_mask=single_mask,
+        batch_size=1, use_mask=args.use_mask,
         repeat=False, drop_remainder=False,
         field_size=args.field_size,
         norm_val=args.density_normalization

@@ -1,3 +1,9 @@
+# CosmoFiller/CosmoFiller/OutputReaders.py
+
+"""
+Module for reading and analyzing output cosmological fields from different reconstruction methods.
+"""
+
 import numpy as np
 from glob import glob
 import os

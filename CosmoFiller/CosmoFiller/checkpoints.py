@@ -1,3 +1,10 @@
+# checkpoints.py
+
+"""
+This module defines custom Keras callbacks for saving model checkpoints
+at specified epoch intervals during training.
+"""
+
 from tensorflow import keras
 import os
 import numpy as np
