@@ -135,9 +135,8 @@ if __name__ == "__main__":
     val_dataset = create_dataset(
         x_valid,
         y_valid,
-        single_mask=single_mask,
+        mask=single_mask,
         batch_size=1,
-        use_mask=args.use_mask,
         repeat=False,
         drop_remainder=False,
         field_size=args.field_size,

@@ -60,7 +60,7 @@ def parse_fn(obs_path, true_path, mask=None,
     # ------ Apply mask if provided ------
     if mask is not None:
         mask_tf = tf.convert_to_tensor(mask, dtype=tf.float32)
-        mask_tf = tf.expand_dims(mask, axis=-1)
+        mask_tf = tf.expand_dims(mask_tf, axis=-1)
         mask_tf.set_shape((field_size, field_size, field_size, 1))
 
         masked_obs = obs * mask_tf

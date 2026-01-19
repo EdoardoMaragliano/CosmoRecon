@@ -282,12 +282,12 @@ class MaskedMSE(tf.keras.losses.Loss):
     
     
 def compute_gradient(x):
-    # assume x: [batch, H, W, D]
-    logger.info("Computing gradients.")
-    gx = x[:, 1:, :, :] - x[:, :-1, :, :]
-    gy = x[:, :, 1:, :] - x[:, :, :-1, :]
-    gz = x[:, :, :, 1:] - x[:, :, :, :-1]
-    logger.info("Gradients computed.")
+    # assume x: [batch, H, W, D, channels]
+    
+    gx = x[:, 1:, :, :, :] - x[:, :-1, :, :, :]     # grad along x, shape [batch, H-1, W, D, channels]
+    gy = x[:, :, 1:, :, :] - x[:, :, :-1, :, :]
+    gz = x[:, :, :, 1:, :] - x[:, :, :, :-1, :]
+    
 
     return gx, gy, gz
 
@@ -339,6 +339,7 @@ class MaskedGradientLoss(tf.keras.losses.Loss):
         dilation_iter: Quanti pixel espandere la zona di controllo attorno al buco
         """
         super().__init__(**kwargs)
+        self.dilation_iter = dilation_iter
         
         # 1. Preparazione e Inversione (Hole = 1)
         mask_tensor = prepare_mask_tensor(mask)
@@ -377,12 +378,9 @@ class MaskedGradientLoss(tf.keras.losses.Loss):
         gx_p, gy_p, gz_p = compute_gradient(y_pred)
 
         # Broadcasting works automatically here between (Batch, H, W, D) and (1, H, W, D)
-        logger.info("Calculating masked gradient loss terms.")
         term_x = tf.reduce_sum(tf.square(gx_t - gx_p) * self.mask_x) / self.denom_x
         term_y = tf.reduce_sum(tf.square(gy_t - gy_p) * self.mask_y) / self.denom_y
         term_z = tf.reduce_sum(tf.square(gz_t - gz_p) * self.mask_z) / self.denom_z
-
-        logger.info(f"Masked gradient loss computed")
 
         return term_x + term_y + term_z
     
@@ -397,7 +395,7 @@ class MaskedGradientLoss(tf.keras.losses.Loss):
 
 
 class MaskedMSEWithGradient(tf.keras.losses.Loss):
-    def __init__(self, mask, gradient_weight=1.0, **kwargs):
+    def __init__(self, mask, gradient_weight=0.1, **kwargs):
         super().__init__(**kwargs)
         self.mse_loss_fn = MaskedMSE(mask)
         self.grad_loss_fn = MaskedGradientLoss(mask)

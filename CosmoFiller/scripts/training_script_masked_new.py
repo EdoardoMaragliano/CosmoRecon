@@ -165,12 +165,12 @@ if __name__ == "__main__":
     # -------------------------------
     train_dataset = create_dataset(
         x_train, y_train, 
-        mask=single_mask,
-        batch_size=args.batch_size, 
-        repeat=args.repeat_dataset, 
-        drop_remainder=args.drop_remainder,
-        field_size=args.field_size,
-        norm_val=args.density_normalization
+        mask            = single_mask,
+        batch_size      = args.batch_size, 
+        repeat          = args.repeat_dataset, 
+        drop_remainder  = args.drop_remainder,
+        field_size      = args.field_size,
+        norm_val        = args.density_normalization
     )
 
     # Log a batch shape
@@ -186,12 +186,12 @@ if __name__ == "__main__":
         
     val_dataset = create_dataset(
         x_valid, y_valid,
-        mask=single_mask,
-        batch_size=args.batch_size, 
-        repeat=False, 
-        drop_remainder=False,
-        field_size=args.field_size,
-        norm_val=args.density_normalization
+        mask            = single_mask,
+        batch_size      = args.batch_size, 
+        repeat          = False, 
+        drop_remainder  = False,
+        field_size      = args.field_size,
+        norm_val        = args.density_normalization
     )
 
     # -------------------------------
