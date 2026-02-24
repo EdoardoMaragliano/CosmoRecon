@@ -114,12 +114,18 @@ class MaskedInpaintingUNet2D:
                 norm_val=40, 
                 use_mask=False, 
                 logger=None,
+                residuals_only=False
                 ):
         self.use_mask = use_mask
         self.logger = logger
         self.norm_val = norm_val
+        self.residuals_only = residuals_only
 
-        self.output_activation = self.shifted_relu if input_field=='delta' else tf.nn.relu
+        if input_field == 'delta':
+            self.output_activation = self.shifted_relu
+        else:
+            # Caso standard per rho (densità sempre positiva)
+            self.output_activation = tf.nn.relu
 
         self.unet = self._build_unet(input_size=input_size,
                                      base_filters=base_filters,
@@ -160,7 +166,7 @@ class MaskedInpaintingUNet2D:
         if dropout_layer:
             x = keras.layers.Dropout(dropout_rate)(x)
 
-        # Decoder
+        '''        # Decoder
         for d in reversed(range(depth)):
             filters //= 2
             x = keras.layers.Conv2D(filters, (3,3), activation='relu', padding='same')(x)
@@ -171,8 +177,39 @@ class MaskedInpaintingUNet2D:
         # Output
         outputs = keras.layers.Conv2D(1, (3,3), padding='same', activation=self.output_activation, dtype='float32')(x)
 
-        return keras.Model(inputs=inputs, outputs=outputs)
+        ## Residual learning output (alternativo al output diretto)
+        if self.residuals_only:
+            residual = keras.layers.Conv2D(1, (3,3), padding='same', activation=None, dtype='float32',
+                                   kernel_initializer='zeros')(x)
+            outputs = inputs + residual  # aggiunta del residuo'''
 
+        # Decoder (corretto)
+        for d in reversed(range(depth)):
+            filters //= 2
+            x = keras.layers.Conv2DTranspose(filters, (2,2), strides=(2,2), padding='same')(x)
+            x = keras.layers.concatenate([x, convs[d]], axis=-1)
+            x = keras.layers.Conv2D(filters, (3,3), activation='relu', padding='same')(x)
+            x = keras.layers.Conv2D(filters, (3,3), activation='relu', padding='same')(x)
+
+        ## Residual learning output (alternativo al output diretto)
+        if self.residuals_only:
+            # 1. Il layer del residuo deve essere LINEARE 
+            residual = keras.layers.Conv2D(1, (3,3), padding='same', activation=None,
+                            kernel_initializer='glorot_uniform', dtype='float32', 
+                            name='residual_layer')(x)
+            
+            # 2. Somma l'input al residuo
+            raw_output = keras.layers.Add()([inputs[...,:1], residual])
+            
+            # 3. La mappa finale ha l'attivazione FISICA (Softplus o ReLU)
+            # Questo garantisce la positività del risultato finale
+            final_map = keras.layers.Activation(self.output_activation, name='final_map')(raw_output)
+            
+            # Ritorna entrambi: il residuo è "puro", la mappa è "vincolata"
+            return keras.Model(inputs=inputs, outputs=[final_map, residual])
+        else:
+            outputs = keras.layers.Conv2D(1, (3,3), padding='same', activation=self.output_activation, dtype='float32')(x)
+            return keras.Model(inputs=inputs, outputs=outputs)
 
 # ============================
 # 2D Loss Utilities
