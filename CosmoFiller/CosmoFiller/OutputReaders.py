@@ -522,3 +522,128 @@ class Plotter:
         
         fig.suptitle(title)
         return fig
+
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import numpy as np
+
+class Plotter2D:
+    def __init__(self, readers, colors_dict: dict = None, linestyles: list = None):
+        if not isinstance(readers, (list, tuple)):
+            readers = [readers]
+        self.readers = readers
+
+        # Colori adattati per Input, Target e Prediction
+        self.colors_dict = colors_dict if colors_dict is not None else {
+            'input': 'grey',      # Mappa con gap
+            'target': 'black',    # Verità (Truth)
+            'pred': 'tab:blue',   # Ricostruzione UNet
+            'residual_pred': 'tab:red' 
+        }
+
+        default_linestyles = ['-', '--', ':', '-.']
+        self.linestyles = linestyles if linestyles is not None else default_linestyles[:len(readers)]
+
+        # Etichette assi per 2D
+        self.pkylabel = r"$P(k)\, [\mathrm{deg}^{2}]$" # o h^-2 Mpc^2 a seconda delle unità
+        self.pkxlabel = r"$k\, [h~\mathrm{Mpc}^{-1}]$"
+
+        self.legend_labels_dict = {
+            'input': 'Input (Masked)',
+            'target': 'Target (Truth)',
+            'pred': 'UNet Prediction',
+            'residual_pred': 'Residual Component'
+        }
+
+    def _make_legend_handles(self, modes):
+        handles = []
+        for mode in modes:
+            label = self.legend_labels_dict.get(mode, mode)
+            color = self.colors_dict.get(mode, 'black')
+            handles.append(plt.Line2D([], [], color=color, lw=2, label=label))
+        
+        ls_handles = []
+        if len(self.readers) > 1:
+            ls_handles = [
+                plt.Line2D([], [], color='dimgray', lw=2, linestyle=ls, label=r.name)
+                for r, ls in zip(self.readers, self.linestyles)
+            ]
+        return handles, ls_handles
+
+    def plot_pk_and_ratio(self, 
+                          title=None, 
+                          figsize=(8, 8), 
+                          k_range=None,
+                          ratio_ylim=(0.8, 1.2)):
+        """
+        Plot 2x1: In alto il P(k), in basso il rapporto P_pred / P_target.
+        Ideale per vedere a quali scale la UNet sta 'spingendo' bene.
+        """
+        modes = ['target', 'input', 'pred']
+        k = self.readers[0].k_values
+        
+        fig = plt.figure(figsize=figsize)
+        gs = gridspec.GridSpec(2, 1, height_ratios=[2, 1], hspace=0.05)
+        
+        ax0 = fig.add_subplot(gs[0])
+        ax1 = fig.add_subplot(gs[1], sharex=ax0)
+
+        for i, reader in enumerate(self.readers):
+            ls = self.linestyles[i]
+            
+            # --- Panel Superiore: P(k) ---
+            for mode in modes:
+                if mode in reader.pk_results:
+                    # Usiamo la media su tutti i mock del test set
+                    pk_mean = np.mean(reader.pk_results[mode], axis=0)
+                    ax0.plot(k, pk_mean, color=self.colors_dict[mode], 
+                             ls=ls, lw=2, label=f"{mode}_{i}")
+
+            # --- Panel Inferiore: Rapporto (Transfer Function) ---
+            # Calcoliamo P_pred / P_target
+            if 'pred' in reader.pk_results and 'target' in reader.pk_results:
+                ratio = reader.pk_results['pred'] / reader.pk_results['target']
+                mean_ratio = np.mean(ratio, axis=0)
+                std_ratio = np.std(ratio, axis=0)
+                
+                ax1.plot(k, mean_ratio, color=self.colors_dict['pred'], ls=ls, lw=2)
+                ax1.fill_between(k, mean_ratio - std_ratio, mean_ratio + std_ratio, 
+                                 color=self.colors_dict['pred'], alpha=0.2)
+
+        # Formattazione
+        ax0.set_xscale('log')
+        ax0.set_yscale('log')
+        ax0.set_ylabel(self.pkylabel)
+        ax0.tick_params(labelbottom=False)
+        
+        ax1.axhline(1.0, color='black', ls='--')
+        ax1.set_ylabel(r"$P_{\mathrm{pred}} / P_{\mathrm{target}}$")
+        ax1.set_xlabel(self.pkxlabel)
+        ax1.set_ylim(ratio_ylim)
+        
+        if k_range:
+            ax0.set_xlim(k_range)
+
+        # Legenda
+        h_col, h_ls = self._make_legend_handles(modes)
+        ax0.legend(handles=h_col, loc='best', frameon=False)
+        
+        if title:
+            fig.suptitle(title)
+        
+        fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+        return fig, [ax0, ax1]
+
+    def plot_comparison_maps(self, idx=0):
+        """Plot delle mappe spaziali per un controllo visivo diretto."""
+        reader = self.readers[0]
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+        
+        modes = ['input', 'target', 'pred']
+        for ax, mode in zip(axs, modes):
+            im = ax.imshow(reader.fields[mode][idx], origin='lower', cmap='viridis')
+            ax.set_title(self.legend_labels_dict[mode])
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        
+        plt.tight_layout()
+        return fig, axs
