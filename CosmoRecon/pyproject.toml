@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "CosmoRecon"
+version = "0.1.0"
+description = "Deep-learning reconstruction of 3D cosmological density fields"
+readme = {text = "Deep-learning reconstruction of 3D cosmological density fields", content-type = "text/plain"}
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    {name = "Edoardo Maragliano", email = "edoardo.maragliano@gmail.com"},
+]
+
+dependencies = [
+    "tensorflow>=2.18",
+    "numpy",
+    "scikit-learn",
+    "matplotlib",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+optuna = ["optuna>=4.0"]
+analysis = ["pypower", "pmesh"]
+dev = ["pytest", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["CosmoRecon*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: marks tests that require a GPU (deselect with '-m \"not gpu\"')",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:CosmoRecon.checkpoints",
+    "ignore::DeprecationWarning:CosmoRecon.models",
+]

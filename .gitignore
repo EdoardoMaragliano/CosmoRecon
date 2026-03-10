@@ -1,13 +1,42 @@
-UNetModelMasked/*/store_models/
-UNetModelMasked/*/logs/
-UNetModelMasked/*/losses/
-UNetModelMasked/*/*data/
-UNetModelMasked/train_*/
-UNetModelMasked/output_products/
-UNetModelMasked/training_checkpoints/
-UNetModelMasked/*/train.log
-UNetModelMasked/__pycache__/
-UNetModelMasked/*/*.npy
-UNetModelMasked/*/history.csv
+# Training outputs
 training_runs/
 optuna_runs/
+
+# Model artefacts
+**/store_models/
+**/losses/
+**/output_data/
+**/logs/
+**/history.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Data files (large binary)
+*.npy
+*.h5
+*.hdf5
+*.keras
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment files (keep the reference one)
+*.yml
+!tf_environment.yml

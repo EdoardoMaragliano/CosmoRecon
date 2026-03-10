@@ -1,0 +1,17 @@
+{
+    "obs_dir": "data/observed/",
+    "true_dir": "data/true/",
+    "mask_dir": "data/masks/",
+    "output_dir": "train_delta/",
+    "field_size": 128,
+    "input_field": "rho",
+    "base_filters": 16,
+    "batch_size": 16,
+    "epochs": 500,
+    "save_freq": 100,
+    "learning_rate": 1e-4,
+    "log_file": "train.log",
+    "use_mask": true,
+    "debug": true,
+    "density_normalization": 20.0
+}
